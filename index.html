@@ -1,0 +1,898 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b2027">
+<meta name="robots" content="noindex">
+<title>Kolvind Watchtower</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%231b2027'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23d9531e' stroke-width='3'/%3E%3Ccircle cx='16' cy='9' r='2.4' fill='%23ffb27a'/%3E%3C/svg%3E">
+<!--
+  Kolvind Watchtower Web: the ideas board (plan/board.json on main in Troos88/warmth-vst) in a browser.
+  This page holds NO data. It reads and writes the board through the GitHub API with a token that stays in this
+  browser only. Saving merges card by card exactly like tools/release_test/board.py (merge / merge_card / dumps),
+  so the desktop Watchtower, Claude and this page never overwrite each other. Keep the two in step.
+-->
+<style>
+:root{
+  --bg:#eef0f2; --panel:#ffffff; --panel2:#f6f7f8; --ink:#1b2027; --muted:#5d6672; --line:#d5d9de;
+  --ember:#d9531e; --ember-ink:#ffffff; --amber-bg:#fbe6dc; --pass:#1f8a4c; --fail:#c62a2a; --fail-bg:#fbeaea;
+  --shadow:0 1px 2px rgba(20,24,30,.08),0 2px 8px rgba(20,24,30,.05);
+  --mono:ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#121417; --panel:#1b1f24; --panel2:#22272d; --ink:#e8eaed; --muted:#9aa3ad; --line:#2f353c;
+    --ember:#e8662f; --amber-bg:#3a2419; --fail-bg:#3a1c1c; --shadow:0 1px 2px rgba(0,0,0,.4);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#121417; --panel:#1b1f24; --panel2:#22272d; --ink:#e8eaed; --muted:#9aa3ad; --line:#2f353c;
+  --ember:#e8662f; --amber-bg:#3a2419; --fail-bg:#3a1c1c; --shadow:0 1px 2px rgba(0,0,0,.4);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:15px/1.4 var(--sans);-webkit-text-size-adjust:100%}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+.hidden{display:none!important}
+
+/* ---------- top bar */
+header{position:sticky;top:0;z-index:20;background:#1b2027;color:#e8eaed;padding:10px 16px calc(10px);padding-top:max(10px,env(safe-area-inset-top));
+  display:flex;align-items:center;gap:10px}
+.brand{display:flex;align-items:center;gap:9px;font:600 13px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;white-space:nowrap}
+.brand .knob{width:18px;height:18px;border-radius:50%;border:2.5px solid #d9531e;position:relative;box-shadow:0 0 10px rgba(217,83,30,.55)}
+.brand .knob::after{content:"";position:absolute;width:4px;height:4px;border-radius:50%;background:#ffb27a;left:5px;top:1px}
+.brand small{color:#9aa3ad;letter-spacing:.1em}
+.spacer{flex:1}
+.status{font:12px/1 var(--mono);color:#9aa3ad;display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.led{width:8px;height:8px;border-radius:50%;background:#5d6672;flex:none}
+.led.ok{background:#2fbf6b;box-shadow:0 0 6px #2fbf6b}
+.led.busy{background:#e8a33a;animation:pulse 1s infinite}
+.led.bad{background:#e04a4a}
+@keyframes pulse{50%{opacity:.35}}
+.iconbtn{background:none;border:1px solid #3a414a;color:#e8eaed;border-radius:8px;height:32px;min-width:32px;padding:0 8px;font-size:15px}
+.iconbtn:active{background:#2a3038}
+
+/* ---------- tools row */
+.tools{display:flex;flex-wrap:wrap;gap:8px;padding:12px 16px 6px;align-items:center}
+.search{flex:1 1 180px;min-width:0;height:38px;border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:0 12px}
+.sel{height:38px;border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:0 8px;max-width:160px}
+.chip{height:38px;border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:0 13px;white-space:nowrap}
+.chip[aria-pressed="true"]{background:var(--amber-bg);border-color:var(--ember);color:var(--ink)}
+.add{height:38px;border:0;border-radius:10px;padding:0 14px;background:var(--ember);color:var(--ember-ink);font-weight:600;white-space:nowrap}
+
+/* ---------- column tabs (phone) */
+.tabs{display:flex;gap:6px;overflow-x:auto;padding:6px 16px 8px;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{flex:none;border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:7px 12px;font-size:14px;white-space:nowrap}
+.tab b{font:600 12px var(--mono);color:var(--muted);margin-left:5px}
+.tab[aria-selected="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.tab[aria-selected="true"] b{color:inherit;opacity:.7}
+
+/* ---------- board */
+.board{display:block;padding:0 16px 120px}
+.col{display:none}
+.col.show{display:block}
+.colhead{display:none}
+.list{display:flex;flex-direction:column;gap:8px;min-height:60px}
+@media (min-width:900px){
+  .tabs{display:none}
+  .board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(260px,1fr);gap:12px;overflow-x:auto;padding:6px 16px 40px;align-items:start}
+  .col,.col.show{display:block;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px;min-height:200px}
+  .colhead{display:flex;align-items:baseline;gap:8px;padding:2px 4px 10px;font:600 12px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .colhead b{color:var(--ink)}
+}
+.card{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);
+  padding:10px 10px 10px 14px;display:flex;gap:8px;align-items:flex-start;overflow:hidden}
+.card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--area,#5d6672)}
+.card .body{flex:1;min-width:0;cursor:pointer}
+.card .t{font-weight:600;overflow-wrap:anywhere}
+.card .meta{display:flex;flex-wrap:wrap;gap:5px 8px;margin-top:5px;font:12px/1.3 var(--mono);color:var(--muted)}
+.card .why{margin-top:4px;color:var(--muted);font-size:13.5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tag{display:inline-flex;align-items:center;gap:4px}
+.tag .dot{width:7px;height:7px;border-radius:50%;background:var(--area)}
+.badge{border-radius:5px;padding:1px 6px;font-weight:600}
+.badge.bug{background:var(--fail-bg);color:var(--fail)}
+.badge.wait{background:var(--amber-bg);color:var(--ember)}
+.badge.inbox{background:var(--panel2);border:1px dashed var(--muted)}
+.grip{flex:none;width:30px;height:36px;margin:-4px -4px -4px 0;display:grid;place-items:center;color:var(--muted);touch-action:none;cursor:grab;border-radius:8px;user-select:none}
+.grip:active{background:var(--panel2)}
+.card.dragging{opacity:.35}
+.ghost{position:fixed;z-index:50;pointer-events:none;transform:rotate(1.5deg);box-shadow:0 10px 30px rgba(0,0,0,.25);opacity:.95}
+.drop-line{height:3px;border-radius:2px;background:var(--ember);margin:-2px 0}
+.empty{color:var(--muted);font-size:14px;padding:18px 6px;text-align:center}
+
+/* ---------- sheet (edit / add / setup) */
+.scrim{position:fixed;inset:0;background:rgba(10,12,15,.45);z-index:40;display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--panel);width:100%;max-width:640px;max-height:92vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom))}
+@media (min-width:700px){.scrim{align-items:center}.sheet{border-radius:16px;max-height:86vh}}
+.sheet h2{margin:0 0 4px;font-size:18px}
+.sheet .sub{color:var(--muted);font:12px var(--mono);margin-bottom:12px;overflow-wrap:anywhere}
+.f{display:block;margin:12px 0 0}
+.f>span{display:block;font:600 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.f input[type=text],.f input[type=password],.f textarea,.f select{width:100%;border:1px solid var(--line);background:var(--panel2);border-radius:9px;padding:9px 10px}
+.f textarea{resize:vertical;min-height:70px;line-height:1.4}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.row>.f{flex:1 1 120px}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg button{border:1px solid var(--line);background:var(--panel2);border-radius:8px;padding:7px 10px;font-size:14px}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.check{display:flex;gap:10px;align-items:center;margin-top:14px;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--panel2)}
+.check input{width:20px;height:20px;accent-color:var(--ember)}
+.actions{display:flex;gap:8px;margin-top:18px;flex-wrap:wrap;position:sticky;bottom:calc(-16px - env(safe-area-inset-bottom));background:var(--panel);padding:10px 0 4px}
+.btn{height:42px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);padding:0 16px;font-weight:600}
+.btn.primary{background:var(--ember);border-color:var(--ember);color:var(--ember-ink)}
+.btn.danger{color:var(--fail)}
+.btn.danger.armed{background:var(--fail);border-color:var(--fail);color:#fff}
+.note{color:var(--muted);font-size:13.5px}
+.note code{font-family:var(--mono);font-size:12.5px;background:var(--panel2);padding:1px 4px;border-radius:4px}
+ol.steps{padding-left:20px;margin:8px 0}
+ol.steps li{margin:6px 0}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 14px;border-radius:10px;z-index:60;max-width:calc(100% - 32px);font-size:14px;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.fab{position:fixed;right:16px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:30;height:54px;padding:0 20px;border-radius:999px;border:0;background:var(--ember);color:#fff;font-weight:700;font-size:16px;box-shadow:0 6px 18px rgba(217,83,30,.45)}
+@media (min-width:900px){.fab{display:none}}
+@media (max-width:899px){.tools .add{display:none}}
+/* ---------- morning test tour (read-only) */
+.tg{margin:16px 0 4px;font:600 12px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ember)}
+.tg small{color:var(--muted);letter-spacing:0;text-transform:none;font-weight:400}
+.tprep{color:var(--muted);font-size:13.5px;margin-bottom:6px}
+.tstep{border:1px solid var(--line);border-radius:10px;background:var(--panel2);padding:9px 11px;margin:6px 0}
+.tstep .t{font-weight:600}
+.tstep .d{font-size:13.5px;margin-top:3px}
+.tstep.done{opacity:.55}
+.tstep.done .t::before{content:"✓ ";color:var(--pass)}
+/* ---------- the Almighty Ear (plan/ear/status.json): one line when the ear wants Tobias's ears */
+.earban{display:flex;align-items:center;gap:10px;margin:0 0 12px;padding:11px 13px;border:1px solid var(--ember);border-radius:10px;
+  background:var(--amber-bg);color:var(--ink);text-decoration:none;font-size:14.5px}
+.earban b{color:var(--ember)}
+.earban span:last-child{margin-left:auto;color:var(--ember);font-weight:600}
+/* ---------- the robot from the phone (branch "robot": request.json from here, status.json + log.txt from the PC) */
+.rb-state{border:1px solid var(--line);border-radius:12px;background:var(--panel2);padding:14px;margin:6px 0 4px}
+.rb-state .big{font-size:17px;font-weight:700}
+.rb-state .d{margin-top:4px;font-size:14.5px}
+.rb-state.ok{border-color:var(--pass)} .rb-state.bad{border-color:var(--fail);background:var(--fail-bg)} .rb-state.busy{border-color:var(--ember);background:var(--amber-bg)}
+.rb-tot{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 16px;margin-top:8px;font-weight:700;font-size:15px}
+.rb-tot span{white-space:nowrap}
+.rb-tot .p{color:var(--pass)} .rb-tot .f{color:var(--fail)} .rb-tot .s{color:var(--muted)}
+.rb-fail{border:1px solid var(--line);border-left:4px solid var(--fail);border-radius:9px;background:var(--panel);padding:8px 10px;margin:6px 0}
+.rb-fail .t{font-weight:600;overflow-wrap:anywhere} .rb-fail .n{font-size:13px;color:var(--muted);margin-top:2px;overflow-wrap:anywhere}
+.rb-pc{color:var(--muted);font-size:13px;margin-top:10px}
+.rb-copy{width:100%;min-height:160px;font:12px/1.35 var(--mono);border:1px solid var(--line);border-radius:9px;background:var(--panel2);padding:8px}
+.btn.wide{flex:1 1 100%}
+.btn:disabled{opacity:.45;cursor:default}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="knob" aria-hidden="true"></span><span>Watchtower <small>web</small></span></div>
+  <div class="spacer"></div>
+  <div class="status" id="status" title=""><span class="led" id="led"></span><span id="statusText">Starting…</span></div>
+  <button class="iconbtn" id="robotBtn" title="Kör roboten från mobilen" aria-label="Roboten">🤖</button>
+  <button class="iconbtn" id="tourBtn" title="Morning test tour (read-only list)" aria-label="Morning test tour">🔥</button>
+  <button class="iconbtn" id="syncBtn" title="Get the latest board from GitHub" aria-label="Sync">⟳</button>
+  <button class="iconbtn" id="setupBtn" title="Settings" aria-label="Settings">⚙</button>
+</header>
+
+<main id="app" class="hidden">
+  <a class="earban hidden" id="earBan" target="_blank" rel="noopener"><span aria-hidden="true">👂</span><span id="earText"></span><span>Lyssna →</span></a>
+  <div class="tools">
+    <input class="search" id="q" type="search" placeholder="Search cards" autocomplete="off">
+    <select class="sel" id="area" aria-label="Part"></select>
+    <button class="chip" id="waitOnly" aria-pressed="false">⏳ Waiting for me</button>
+    <button class="add" id="addBtn">+ Idea</button>
+  </div>
+  <nav class="tabs" id="tabs" role="tablist"></nav>
+  <section class="board" id="board"></section>
+</main>
+<button class="fab hidden" id="fab">+ Idea</button>
+<div id="sheetRoot"></div>
+
+<script>
+"use strict";
+/* ================================================================ board logic (port of tools/release_test/board.py) */
+const COLUMNS = [["idea","Ideas"],["next","Next"],["building","Building"],["testing","Testing"],["done","Done"],["parked","Maybe / parked"]];
+const AREAS = ["Track","Master","Voice","Studio","Song X-ray","Guitar Lift","Tools","Release","Business"];
+const SIZES = ["evening","weekend","big"];
+const KEYS = ["id","title","why","area","size","column","order","kind","waiting","branch","checks","notes","source","updated"];
+const AREA_COLOURS = {"Track":"#d9531e","Master":"#b8860b","Voice":"#8e44ad","Studio":"#2e86c1","Song X-ray":"#16a085",
+  "Guitar Lift":"#a04000","Tools":"#5d6672","Release":"#1f8a4c","Business":"#34495e","Session flow":"#c0392b"};
+const ABOUT = "Kolvind ideas board - edited in Kolvind Watchtower (tools/release_test) and by Claude.";
+const BOARD_PATH = "plan/board.json";
+
+const pad = n => String(n).padStart(2,"0");
+function now(){ const d=new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; }
+function slug(t){ return (t.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,40).replace(/^-+|-+$/g,"")) || "card"; }
+const clone = x => JSON.parse(JSON.stringify(x));
+function canon(v){ // order-independent deep compare, like Python == (a missing field = null, like Python's .get())
+  if (v === undefined) v = null;
+  if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]";
+  if (v && typeof v === "object") return "{" + Object.keys(v).sort().map(k => JSON.stringify(k)+":"+canon(v[k])).join(",") + "}";
+  return JSON.stringify(v);
+}
+const eq = (a,b) => canon(a) === canon(b);
+const colIndex = Object.fromEntries(COLUMNS.map(([c],i)=>[c,i]));
+function cmp(a,b){ return a<b?-1:a>b?1:0; }
+
+function dumps(data){
+  const cards = [...(data.cards||[])].sort((a,b) =>
+    ((colIndex[a.column] ?? 99) - (colIndex[b.column] ?? 99)) || ((a.order||0) - (b.order||0)) || cmp(a.id||"", b.id||""));
+  const out = {about: data.about || ABOUT, cards: cards.map(c => { const o={}; for (const k of KEYS) if (k in c) o[k]=c[k]; return o; })};
+  return JSON.stringify(out, null, 1) + "\n";
+}
+function renumber(data, column){
+  const cards = data.cards.filter(c=>c.column===column).sort((a,b)=>(a.order||0)-(b.order||0));
+  cards.forEach((c,i)=>c.order=(i+1)*10);
+}
+function move(data, id, column, index){
+  const card = data.cards.find(c=>c.id===id); if (!card) return;
+  const others = data.cards.filter(c=>c.column===column && c.id!==id).sort((a,b)=>(a.order||0)-(b.order||0));
+  index = index==null ? others.length : Math.max(0, Math.min(index, others.length));
+  others.splice(index, 0, card);
+  card.column = column;
+  others.forEach((c,i)=>c.order=(i+1)*10);
+  card.updated = now();
+}
+function add(data, title, column="idea", fields={}){
+  const ids = new Set(data.cards.map(c=>c.id));
+  const base = slug(title); let id = base, n = 2;
+  while (ids.has(id)) id = `${base}-${n++}`;
+  const orders = data.cards.filter(c=>c.column===column).map(c=>c.order||0);
+  const top = orders.length ? Math.min(...orders) : 10;
+  const card = {id, title, column, order: top-5, kind:"idea", updated: now()};
+  for (const [k,v] of Object.entries(fields)) if (v!==undefined && v!==null && v!=="") card[k]=v;
+  data.cards.push(card); renumber(data, column); return card;
+}
+function mergeCard(cb, co, ct){
+  const newer = (co.updated||"") >= (ct.updated||"") ? co : ct;
+  if (!cb) return newer;
+  const out = {};
+  const keys = [...new Set([...Object.keys(cb), ...Object.keys(co), ...Object.keys(ct)])];
+  for (const k of keys){
+    const vb=cb[k], vo=co[k], vt=ct[k];
+    const v = eq(vo,vb) ? vt : eq(vt,vb) ? vo : newer[k];
+    if (v!==undefined && v!==null) out[k]=v;
+  }
+  out.updated = [(co.updated||""),(ct.updated||"")].sort().pop();
+  return out;
+}
+function merge(base, ours, theirs){
+  const m = d => new Map((d.cards||[]).map(c=>[c.id,c]));
+  const b=m(base), o=m(ours), t=m(theirs), out=[];
+  for (const id of new Set([...o.keys(), ...t.keys()])){
+    const co=o.get(id), ct=t.get(id), cb=b.get(id);
+    if (co && ct){
+      if (eq(co,ct) || eq(ct,cb)) out.push(co);
+      else if (eq(co,cb)) out.push(ct);
+      else out.push(mergeCard(cb,co,ct));
+    } else if (co){ if (!cb || !eq(co,cb)) out.push(co); }
+    else if (ct){ if (!cb || !eq(ct,cb)) out.push(ct); }
+  }
+  return {about: ours.about || theirs.about, cards: out};
+}
+/* The morning test tour (plan/test-tour.json, made by tools/release_test/test_tour.py --plan) next to the live board:
+   the same groups as groups_of() there (round + setup), a step is done when every card it belongs to is in Done. */
+function tourRows(plan, data){
+  const byId = new Map((data.cards||[]).map(c=>[c.id,c]));
+  const cardDone = id => { const c = byId.get(id); return !!c && c.column === "done"; };
+  const groups = [];
+  for (const s of plan.steps||[]){
+    const key = String(s.round ?? "") + "|" + s.setup;
+    if (!groups.length || groups[groups.length-1].key !== key){
+      const su = (plan.setups||{})[s.setup] || {title:s.setup, prepare:""};
+      groups.push({key, setup:s.setup, title:su.title, prepare:su.prepare, fresh:s.round===1, steps:[]});
+    }
+    groups[groups.length-1].steps.push(Object.assign({}, s, {done: (s.cards||[]).length>0 && s.cards.every(cardDone)}));
+  }
+  const cards = Object.keys(plan.cards||{});
+  return {groups, cards: cards.length, cardsDone: cards.filter(cardDone).length, steps:(plan.steps||[]).length,
+          minutes: plan.minutes||0, robot: plan.robot_minutes||0, made: plan.made||""};
+}
+function checkMerge(ours, merged){ // same guard as check_merge() in board.py: never save a board that lost most of our cards
+  const mine = new Set((ours.cards||[]).map(c=>c.id)), kept = new Set((merged.cards||[]).map(c=>c.id));
+  let dropped = 0; for (const id of mine) if (!kept.has(id)) dropped++;
+  if (mine.size >= 20 && dropped*10 >= mine.size*9)
+    throw new Error(`Stopped: saving would remove ${dropped} of your ${mine.size} cards, which looks like a board that could not be read, not real deletions. Nothing was saved. Try ⟳ again.`);
+  return merged;
+}
+/* The robot from the phone (2026-10-29, tools/release_test/robot_listener.py): what to show for the robot branch's
+   status.json and request.json. status = null when the branch has no status (the PC has never listened). nowMs = Date.now(). */
+const ROBOT_BRANCH = "robot";
+function robotTime(iso, nowMs){
+  const t = Date.parse(iso||""); if (isNaN(t)) return "";
+  const d = new Date(t), n = new Date(nowMs), hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (d.toDateString() === n.toDateString()) return hm;
+  if (new Date(nowMs - 864e5).toDateString() === d.toDateString()) return "igår " + hm;
+  return `${d.getDate()}/${d.getMonth()+1} ${hm}`;
+}
+function robotView(status, request, nowMs){
+  const mins = iso => (nowMs - Date.parse(iso||"")) / 60000;
+  const v = {kind:"", title:"", text:"", now:"", canRun:false, canCopy:false, total:null, fails:[], pc:""};
+  if (!status){
+    return Object.assign(v, {kind:"bad", title:"Mobilroboten är inte igång på datorn",
+      text:"Gör så här en gång på datorn: öppna GitHub Desktop, välj Repository → Show in Explorer, gå till tools → release_test och dubbelklicka Mobilroboten.bat. Den visar en parkod som du skriver in här. Sedan startar den av sig själv varje gång du loggar in."});
+  }
+  if (status.listening_since) v.pc = "Mobilroboten startade på datorn kl. " + robotTime(status.listening_since, nowMs) + ".";
+  const req = request && typeof request.id === "string" && request.id ? request : null;
+  if (req && req.id !== status.id){
+    const m = mins(req.asked);
+    if (m < 6) return Object.assign(v, {kind:"busy", title:"Väntar på datorn…", text:"Datorn tittar efter ditt tryck en gång i minuten."});
+    return Object.assign(v, {kind:"bad", canRun:true, title: isNaN(m) ? "Datorn har inte svarat" : `Datorn har inte svarat på ${Math.round(m)} minuter`,
+      text:"Är datorn på och inloggad? Den måste vara igång. Starta den och tryck igen."});
+  }
+  const st = status.state, inst = status.action === "install";
+  if (st === "running"){
+    const m = mins(status.started);
+    Object.assign(v, {kind:"busy", title: inst ? `Installerar ${status.branch || ""}…` : "Roboten kör…", now: status.now || "",
+      text: inst ? `Startade ${robotTime(status.started, nowMs)}. Det tar några minuter (längre första gången). Öppna inte REAPER.`
+                 : `Startade ${robotTime(status.started, nowMs)}. Det tar ungefär 15–20 minuter. Låt datorn vara på och öppna inte REAPER.`});
+    if (m > 120) Object.assign(v, {kind:"bad", canRun:true, title: inst ? "Installationen har tagit ovanligt lång tid" : "Roboten har kört ovanligt länge",
+      text:`Startade ${robotTime(status.started, nowMs)}. Titta på datorn om ett fönster väntar på svar. Du kan trycka igen.`});
+    return v;
+  }
+  if (st === "installed") return Object.assign(v, {kind:"ok", canRun:true, canCopy:true,
+    title:`Installerat ${status.branch || ""} ${robotTime(status.finished, nowMs)}`, text:"Nu kan du trycka Kör roboten."});
+  if (st === "done"){
+    const t = status.total || {pass:0, fail:0, skip:0};
+    return Object.assign(v, {kind: t.fail ? "bad" : "ok", canRun:true, canCopy:true, total:t, fails: status.fails || [],
+      title: t.fail ? `Klar ${robotTime(status.finished, nowMs)} – ${t.fail} ${t.fail === 1 ? "test" : "tester"} gick fel` : `Klar ${robotTime(status.finished, nowMs)} – allt gick bra`,
+      text: (status.build_old ? "Obs: Kolvind på datorn är äldre än koden. Tryck Uppdatera och installera för att testa det senaste. " : "")
+            + (t.fail ? "Kopiera testloggen och ge den till Claude." : "")});
+  }
+  if (st === "failed") return Object.assign(v, {kind:"bad", canRun:true, canCopy:true, title: inst ? "Installationen gick inte" : "Roboten stannade", text: status.message || ""});
+  if (st === "refused" || st === "expired") return Object.assign(v, {kind:"bad", canRun:true, title: inst ? "Inget installerades" : "Roboten körde inte", text: status.message || ""});
+  return Object.assign(v, {canRun:true, title:"Redo", text:"Roboten har inte körts från mobilen än. Tryck Kör roboten – den testar Kolvind på datorn i ungefär 15–20 minuter."});
+}
+/* The branch picker: branches = branches.json from the PC, picked = the name chosen here (or "" = the one installed). */
+function robotPick(branches, picked){
+  const list = Array.isArray(branches) ? branches.filter(b => b && typeof b.name === "string") : [];
+  const cur = list.find(b => b.current) || null;
+  const sel = list.find(b => b.name === picked) || cur || list[0] || null;
+  const out = {list, cur, sel, canInstall: !!sel, canRunHere: !!sel && !!cur && sel.name === cur.name, hint:""};
+  if (sel && sel.has_robot === false){ out.canInstall = false;
+    out.hint = `${sel.name} är äldre än mobilroboten. Installera den i Watchtower på datorn.`; }
+  else if (sel && sel.blocked){ out.canInstall = false; out.hint = ""; }   // its note says what to do first
+  else if (sel && cur && sel.name !== cur.name)
+    out.hint = `Datorn har ${cur.name} installerad. Tryck Uppdatera och installera för att byta till ${sel.name}, sedan Kör roboten.`;
+  return out;
+}
+// for the parity test (node): module.exports when there is no window
+if (typeof window === "undefined") { module.exports = {dumps, merge, checkMerge, move, add, renumber, eq, tourRows, robotView, robotTime, robotPick}; }
+</script>
+<script>
+"use strict";
+if (typeof window !== "undefined") (function(){
+/* ================================================================ storage (per browser, best effort) */
+const LS = {
+  get(k, d){ try { const v = localStorage.getItem("bwt."+k); return v==null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v){ try { localStorage.setItem("bwt."+k, JSON.stringify(v)); } catch {} },
+  del(k){ try { localStorage.removeItem("bwt."+k); } catch {} }
+};
+let cfg = LS.get("cfg", {repo:"Troos88/warmth-vst", branch:"main", token:""});
+const mem = {base:null, ours:null, sha:null};        // base = last board seen on GitHub, ours = with my edits
+let dirty = 0, saving = false, saveTimer = null;
+const ui = {q:"", area: LS.get("area","all"), waitOnly: LS.get("waitOnly",false), tab: LS.get("tab","idea")};
+
+/* ================================================================ GitHub */
+function b64ToText(b64){ const bin = atob(b64.replace(/\s/g,"")); const u = new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); return new TextDecoder().decode(u); }
+function textToB64(text){ const u = new TextEncoder().encode(text); let s=""; for (let i=0;i<u.length;i+=0x8000) s += String.fromCharCode.apply(null, u.subarray(i,i+0x8000)); return btoa(s); }
+async function gh(method, body, raw, path=BOARD_PATH, ref=cfg.branch){
+  const url = `https://api.github.com/repos/${cfg.repo}/contents/${path}` + (method==="GET" ? `?ref=${encodeURIComponent(ref)}&t=${Date.now()}` : "");
+  const r = await fetch(url, {method, cache:"no-store",
+    headers:{"Authorization":`Bearer ${cfg.token}`,"Accept": raw ? "application/vnd.github.raw" : "application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28",
+             ...(body?{"Content-Type":"application/json"}:{})},
+    body: body ? JSON.stringify(body) : undefined});
+  if (!r.ok){
+    let msg = ""; try { msg = (await r.json()).message || ""; } catch {}
+    const e = new Error(explain(r.status, msg)); e.status = r.status; throw e;
+  }
+  return raw ? r.text() : r.json();
+}
+function explain(status, msg){
+  if (status===401) return "GitHub did not accept the token (expired or mistyped). Open ⚙ and paste a new one.";
+  if (status===403) return "The token is not allowed to do that. It needs Contents: Read and write on " + cfg.repo + ".";
+  if (status===404) return "Board not found. Check the repo name in ⚙ and that the token has access to it.";
+  if (status===409 || status===422) return "conflict";
+  return `GitHub said ${status}${msg?": "+msg:""}`;
+}
+async function fetchBoard(){
+  const j = await gh("GET");
+  let text = j.content ? b64ToText(j.content) : "";
+  // Files over 1 MB come back with encoding "none" and NO content: fetch the raw file instead of seeing an empty board
+  if (j.encoding === "none" || (!text && j.size > 0)){
+    text = await gh("GET", null, true);
+    if (!text) throw new Error("GitHub sent the board without its content. Nothing was saved – try ⟳ again.");
+  }
+  let data;
+  try { data = JSON.parse(text || '{"cards":[]}'); }
+  catch { throw new Error(/^(<{7}|={7}|>{7})( |$)/m.test(text) ? "plan/board.json has a merge conflict — finish the merge in GitHub Desktop first." : "plan/board.json on GitHub is not valid JSON. Nothing was saved."); }
+  // same as board.py read_board/parse: a board without a card list is broken, never merged or saved over
+  if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray(data.cards))
+    throw new Error("plan/board.json on GitHub has no card list. That looks broken, so nothing was synced: check it in GitHub Desktop.");
+  return {data, sha: j.sha, text};
+}
+
+/* ================================================================ sync */
+function persist(){ LS.set("draft", {repo:cfg.repo, base:mem.base, ours:mem.ours, sha:mem.sha, dirty}); }
+async function pull(quiet){
+  if (saving) return;
+  status("busy", "Getting the latest…");
+  try {
+    const t = await fetchBoard();
+    // same guard as save() and board.py check_merge: never take a merge that lost most of our cards
+    if (mem.base){ mem.ours = checkMerge(mem.ours, merge(mem.base, mem.ours, t.data)); }
+    else mem.ours = clone(t.data);
+    mem.base = t.data; mem.sha = t.sha;
+    mem.ours.cards ||= [];
+    persist(); render(); loadEar();
+    if (dirty) { status("busy","Unsaved changes"); scheduleSave(200); }
+    else status("ok", "Synced " + clock());
+  } catch(e){ fail(e); if (!quiet) toast(e.message); }
+}
+/* The Almighty Ear: plan/ear/status.json says whether ear packets (or Öronprovet) wait, and where the page is. Read only;
+   a missing file just hides the line. */
+async function loadEar(){
+  try {
+    const st = JSON.parse(await gh("GET", null, true, "plan/ear/status.json"));
+    const n = Number(st.packets) || 0, txt = n ? `<b>Örat</b> har stoppat ${n} ${n===1?"sak":"saker"} – 3 sekunder var` : (st.calibrate ? "<b>Öronprovet</b> väntar – 10 minuter i hörlurar" : "");
+    $("#earBan").classList.toggle("hidden", !txt || !st.page);
+    if (txt && st.page){ $("#earText").innerHTML = txt; $("#earBan").href = st.page; }
+  } catch(e){ $("#earBan").classList.add("hidden"); }
+}
+function scheduleSave(ms=2500){ clearTimeout(saveTimer); saveTimer = setTimeout(save, ms); status("busy", "Unsaved changes"); }
+async function save(){
+  if (saving){ scheduleSave(800); return; }
+  if (!dirty) return;
+  saving = true;
+  const startDirty = dirty, mine = clone(mem.ours);
+  try {
+    for (let attempt=0; attempt<4; attempt++){
+      status("busy", "Saving to GitHub…");
+      const t = await fetchBoard();
+      const merged = checkMerge(mine, merge(mem.base, mine, t.data));
+      const text = dumps(merged);
+      let sha = t.sha;
+      if (text !== t.text){
+        try {
+          const r = await gh("PUT", {message:"Board: Tobias's priorities (Watchtower Web)", content: textToB64(text), sha: t.sha, branch: cfg.branch});
+          sha = r.content.sha;
+        } catch(e){ if (e.message==="conflict") continue; throw e; }
+      }
+      // edits made while saving are kept: merge them on top of what is now on GitHub
+      const parsed = JSON.parse(text);
+      mem.ours = dirty===startDirty ? clone(parsed) : merge(mine, mem.ours, parsed);
+      mem.base = parsed; mem.sha = sha;
+      dirty = dirty===startDirty ? 0 : 1;
+      persist(); render();
+      status(dirty?"busy":"ok", dirty ? "Unsaved changes" : "Saved " + clock());
+      saving = false;
+      if (dirty) scheduleSave(800);
+      return;
+    }
+    throw new Error("GitHub kept changing while saving. Try ⟳ again.");
+  } catch(e){ saving = false; fail(e); toast(e.message + " Your changes are kept on this device."); }
+}
+function changed(){ dirty++; persist(); render(); scheduleSave(); }
+
+/* ================================================================ status + toast */
+const clock = () => { const d=new Date(); return pad(d.getHours())+":"+pad(d.getMinutes()); };
+function status(kind, text){ $("#led").className = "led " + kind; $("#statusText").textContent = text; $("#status").title = text; }
+function fail(e){ status("bad", e.status===401 ? "Token needed" : navigator.onLine===false ? "Offline – kept on this device" : "Not saved"); }
+let toastTimer;
+function toast(text){
+  let t = $(".toast"); if (!t){ t = document.createElement("div"); t.className="toast"; document.body.appendChild(t); }
+  t.textContent = text; clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.remove(), 4200);
+}
+function $(s, r=document){ return r.querySelector(s); }
+function h(tag, attrs={}, ...kids){
+  const e = document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs||{})){
+    if (v==null || v===false) continue;
+    if (k==="class") e.className=v; else if (k==="style") e.style.cssText=v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else if (k==="html") e.innerHTML=v;
+    else e.setAttribute(k, v===true?"":v);
+  }
+  for (const k of kids.flat()) if (k!=null && k!==false) e.append(k.nodeType ? k : String(k));
+  return e;
+}
+
+/* ================================================================ rendering */
+function areas(){ return [...new Set([...AREAS, ...mem.ours.cards.map(c=>c.area).filter(Boolean)])]; }
+function visible(c){
+  if (ui.area!=="all" && c.area!==ui.area) return false;
+  if (ui.waitOnly && !c.waiting) return false;
+  if (ui.q){
+    const hay = [c.title,c.why,c.notes,c.area,c.branch,c.source,(c.checks||[]).join(" ")].join(" ").toLowerCase();
+    return ui.q.toLowerCase().split(/\s+/).filter(Boolean).every(w=>hay.includes(w));
+  }
+  return true;
+}
+const isInbox = c => (c.source||"").startsWith("inbox");
+function cardsIn(col){ return mem.ours.cards.filter(c=>c.column===col).sort((a,b)=>(a.order||0)-(b.order||0)); }
+
+function render(){
+  if (!mem.ours) return;
+  const sel = $("#area"); const cur = ui.area;
+  sel.replaceChildren(h("option",{value:"all"},"All parts"), ...areas().map(a=>h("option",{value:a},a)));
+  sel.value = areas().includes(cur) ? cur : "all";
+  $("#waitOnly").setAttribute("aria-pressed", String(ui.waitOnly));
+  const tabs = $("#tabs"); tabs.replaceChildren();
+  const board = $("#board"); board.replaceChildren();
+  for (const [col,label] of COLUMNS){
+    const cards = cardsIn(col).filter(visible);
+    tabs.append(h("button",{class:"tab",role:"tab","aria-selected":String(ui.tab===col),onclick:()=>{ui.tab=col;LS.set("tab",col);render();window.scrollTo({top:0});}}, label, h("b",{},cards.length)));
+    const list = h("div",{class:"list","data-col":col});
+    if (!cards.length) list.append(h("div",{class:"empty"}, col==="next" ? "Nothing queued. Drag an idea here." : "No cards here" + (ui.q||ui.area!=="all"||ui.waitOnly ? " with this filter." : ".")));
+    for (const c of cards) list.append(cardEl(c));
+    board.append(h("div",{class:"col"+(ui.tab===col?" show":""),"data-col":col}, h("div",{class:"colhead"}, h("b",{},label), cards.length), list));
+  }
+}
+function cardEl(c){
+  const meta = h("div",{class:"meta"},
+    c.area && h("span",{class:"tag"}, h("span",{class:"dot"}), c.area),
+    c.size && h("span",{}, c.size),
+    c.kind==="bug" && h("span",{class:"badge bug"},"bug"),
+    c.waiting && h("span",{class:"badge wait"},"⏳ you"),
+    isInbox(c) && h("span",{class:"badge inbox"},"inbox"),
+    c.branch && h("span",{}, "⎇ " + c.branch));
+  const el = h("div",{class:"card","data-id":c.id, style:`--area:${AREA_COLOURS[c.area]||"#5d6672"}`},
+    h("div",{class:"body",onclick:()=>openCard(c.id)}, h("div",{class:"t"}, c.title), c.why && h("div",{class:"why"}, c.why), meta),
+    h("div",{class:"grip",title:"Drag to move","aria-label":"Drag to move"}, "⋮⋮"));
+  $(".grip", el).addEventListener("pointerdown", e => startDrag(e, c.id, el));
+  return el;
+}
+
+/* ================================================================ drag (mouse + touch, by the ⋮⋮ grip) */
+let drag = null;
+function startDrag(e, id, el){
+  e.preventDefault();
+  const r = el.getBoundingClientRect();
+  const ghost = el.cloneNode(true); ghost.classList.add("ghost"); ghost.style.width = r.width+"px"; ghost.style.left=r.left+"px"; ghost.style.top=r.top+"px";
+  document.body.append(ghost); el.classList.add("dragging");
+  drag = {id, el, ghost, dx:e.clientX-r.left, dy:e.clientY-r.top, line:h("div",{class:"drop-line"}), target:null};
+  const mv = ev => onDrag(ev), up = ev => { removeEventListener("pointermove",mv); removeEventListener("pointerup",up); removeEventListener("pointercancel",up); endDrag(ev.type==="pointerup"); };
+  addEventListener("pointermove", mv); addEventListener("pointerup", up); addEventListener("pointercancel", up);
+}
+function onDrag(e){
+  const d = drag; if (!d) return;
+  d.ghost.style.left = (e.clientX-d.dx)+"px"; d.ghost.style.top = (e.clientY-d.dy)+"px";
+  if (e.clientY < 70) window.scrollBy(0,-12); else if (e.clientY > innerHeight-60) window.scrollBy(0,12);
+  const b = $("#board"), br = b.getBoundingClientRect();
+  if (e.clientX < br.left+40) b.scrollLeft -= 14; else if (e.clientX > br.right-40) b.scrollLeft += 14;
+  d.ghost.style.display="none"; const under = document.elementFromPoint(e.clientX, e.clientY); d.ghost.style.display="";
+  // on a phone, hovering a column tab switches to that column
+  const tab = under && under.closest(".tab");
+  if (tab){ const col = COLUMNS[[...tab.parentNode.children].indexOf(tab)][0];
+    if (col!==ui.tab){ ui.tab=col; document.querySelectorAll(".col").forEach(x=>x.classList.toggle("show",x.dataset.col===col));
+      document.querySelectorAll(".tab").forEach(x=>x.setAttribute("aria-selected",String(x===tab))); }
+    d.target = {col, index:0}; d.line.remove(); return; }
+  const colEl = under && under.closest(".col"); if (!colEl){ return; }
+  const list = $(".list", colEl);
+  const items = [...list.querySelectorAll(".card")].filter(x=>x!==d.el);
+  let idx = items.length;
+  for (let i=0;i<items.length;i++){ const r=items[i].getBoundingClientRect(); if (e.clientY < r.top + r.height/2){ idx=i; break; } }
+  list.insertBefore(d.line, items[idx] || null);
+  d.target = {col: colEl.dataset.col, index: idx, list, items};
+}
+function endDrag(drop){
+  const d = drag; drag = null; if (!d) return;
+  d.ghost.remove(); d.line.remove(); d.el.classList.remove("dragging");
+  if (!drop || !d.target) { render(); return; }
+  // the index counts only the visible (filtered) cards: turn it into a place in the whole column
+  const full = cardsIn(d.target.col).filter(c=>c.id!==d.id);
+  let index = full.length;
+  if (d.target.items && d.target.index < d.target.items.length){
+    const beforeId = d.target.items[d.target.index].dataset.id; index = full.findIndex(c=>c.id===beforeId);
+  } else if (d.target.items && d.target.items.length){
+    const lastId = d.target.items[d.target.items.length-1].dataset.id; index = full.findIndex(c=>c.id===lastId)+1;
+  } else if (!d.target.items) index = 0;
+  const card = mem.ours.cards.find(c=>c.id===d.id);
+  const where = () => card.column + ":" + cardsIn(card.column).findIndex(c=>c.id===d.id);
+  const before = where(), snapshot = clone(mem.ours);
+  move(mem.ours, d.id, d.target.col, index);
+  if (where() === before) { mem.ours = snapshot; render(); return; }   // dropped where it was: no change
+  changed();
+}
+
+/* ================================================================ sheets */
+function sheet(content, onClose){
+  const root = $("#sheetRoot");
+  const close = () => { root.replaceChildren(); document.body.style.overflow=""; onClose && onClose(); };
+  const scrim = h("div",{class:"scrim",onclick:e=>{ if (e.target===scrim) close(); }}, h("div",{class:"sheet",role:"dialog","aria-modal":"true"}, content(close)));
+  root.replaceChildren(scrim); document.body.style.overflow="hidden";
+  const first = scrim.querySelector("[autofocus]"); if (first && matchMedia("(min-width:700px)").matches) first.focus();
+  return close;
+}
+function seg(options, value, onPick){
+  const wrap = h("div",{class:"seg"});
+  const draw = v => { wrap.replaceChildren(...options.map(([val,label])=>h("button",{type:"button","aria-pressed":String(val===v),onclick:()=>{ onPick(val); draw(val); }}, label))); };
+  draw(value); return wrap;
+}
+function field(label, input){ return h("label",{class:"f"}, h("span",{}, label), input); }
+
+function openCard(id){
+  const card = mem.ours.cards.find(c=>c.id===id); if (!card) return;
+  const d = clone(card);
+  sheet(close => {
+    const title = h("input",{type:"text",value:d.title||""});
+    const why = h("textarea",{rows:"2"}, d.why||"");
+    const notes = h("textarea",{rows:"8"}, d.notes||"");
+    const branch = h("input",{type:"text",value:d.branch||"",placeholder:"git branch while it is built"});
+    const checks = h("textarea",{rows:"3",placeholder:"One release-test check per line"}, (d.checks||[]).join("\n"));
+    const areaSel = h("select",{}, h("option",{value:""},"—"), ...areas().map(a=>h("option",{value:a, selected:a===d.area},a)));
+    const sizeSel = h("select",{}, h("option",{value:""},"—"), ...[...new Set([...SIZES, d.size].filter(Boolean))].map(s=>h("option",{value:s, selected:s===d.size},s)));
+    const kindSel = h("select",{}, ...["idea","bug"].map(k=>h("option",{value:k, selected:k===(d.kind||"idea")},k)));
+    const waiting = h("input",{type:"checkbox", checked:!!d.waiting});
+    let column = d.column;
+    const pos = cardsIn(card.column).findIndex(c=>c.id===id);
+    const posBtn = (label, fn) => h("button",{type:"button",class:"btn",onclick:()=>{ apply(); fn(); close(); }}, label);
+    const del = h("button",{type:"button",class:"btn danger",onclick:()=>{
+      if (!del.classList.contains("armed")){ del.classList.add("armed"); del.textContent="Really delete? Tap again"; return; }
+      mem.ours.cards = mem.ours.cards.filter(c=>c.id!==id); close(); changed(); toast("Card deleted.");
+    }}, "Delete");
+    function apply(){
+      // Only what you changed in this sheet goes onto the card AS IT IS NOW: a save or pull while the sheet was open replaces the
+      // card objects, and writing into the old one lost the edit without a word (bug sweep 2026-10-17). d = the card when opened.
+      const live = mem.ours.cards.find(c=>c.id===id);
+      if (!live){ toast("That card was deleted meanwhile."); return false; }
+      const next = clone(live);
+      const set = (k,v) => { if (v===""||v==null||(Array.isArray(v)&&!v.length && !(k in live))) delete next[k]; else next[k]=v; };
+      const text = (k, el, v) => { if (el.value !== (d[k]||"")) set(k, v); };
+      text("title", title, title.value.trim() || d.title); text("why", why, why.value.trim());
+      text("notes", notes, notes.value.replace(/\s+$/,"")); text("branch", branch, branch.value.trim());
+      if (areaSel.value !== (d.area||"")) set("area", areaSel.value);
+      if (sizeSel.value !== (d.size||"")) set("size", sizeSel.value);
+      if (kindSel.value !== (d.kind||"idea")) next.kind = kindSel.value;   // Done without changes must not bump "updated"
+      if (checks.value !== (d.checks||[]).join("\n")) set("checks", checks.value.split("\n").map(s=>s.trim()).filter(Boolean));
+      if (waiting.checked !== !!d.waiting){ if (waiting.checked) next.waiting = true; else if ("waiting" in live) next.waiting = false; }
+      const moved = column !== d.column;
+      if (eq(next, live) && !moved) return false;
+      Object.keys(live).forEach(k=>delete live[k]); Object.assign(live, next);
+      if (moved) move(mem.ours, id, column, 0); else live.updated = now();
+      return true;
+    }
+    return [
+      h("h2",{}, "Edit card"),
+      h("div",{class:"sub"}, [card.id, card.source && "from " + card.source, card.updated && "changed " + card.updated.replace("T"," ")].filter(Boolean).join(" · ")),
+      field("Title", title),
+      field("Why (the doubt it removes, or the fun it adds)", why),
+      h("div",{class:"f"}, h("span",{},"Column"), seg(COLUMNS, column, v=>column=v)),
+      h("div",{class:"row"}, field("Part", areaSel), field("Size", sizeSel), field("Kind", kindSel)),
+      h("label",{class:"check"}, waiting, h("span",{}, "Waiting for me (a decision, a listen or a test run)")),
+      field("Notes", notes),
+      h("div",{class:"row"}, field("Branch", branch)),
+      field("Release checks", checks),
+      h("div",{class:"f"}, h("span",{}, `Place in ${COLUMNS.find(x=>x[0]===card.column)[1]} (now #${pos+1})`),
+        h("div",{class:"seg"},
+          posBtn("⤒ Top", ()=>{ move(mem.ours,id,card.column,0); changed(); }),
+          posBtn("↑ Up", ()=>{ move(mem.ours,id,card.column,Math.max(0,pos-1)); changed(); }),
+          posBtn("↓ Down", ()=>{ move(mem.ours,id,card.column,pos+1); changed(); }),
+          posBtn("⤓ Bottom", ()=>{ move(mem.ours,id,card.column); changed(); }))),
+      h("div",{class:"actions"},
+        h("button",{type:"button",class:"btn primary",onclick:()=>{ const ch = apply(); close(); if (ch) changed(); }}, "Done"),
+        h("button",{type:"button",class:"btn",onclick:close}, "Cancel"),
+        h("div",{class:"spacer",style:"flex:1"}), del)
+    ];
+  });
+}
+
+function openAdd(){
+  sheet(close => {
+    const title = h("input",{type:"text",placeholder:"The idea in a few words",autofocus:true});
+    const why = h("textarea",{rows:"3",placeholder:"Optional: why, or anything you want to remember"});
+    let area = ui.area!=="all" ? ui.area : "";
+    let kind = "idea";
+    const go = () => {
+      const t = title.value.trim(); if (!t){ title.focus(); return; }
+      const d = new Date();
+      add(mem.ours, t, "idea", {why: why.value.trim(), area: area || undefined, kind, waiting: false,
+        source: `inbox (Watchtower Web ${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())})`});
+      ui.tab = "idea"; LS.set("tab","idea");
+      close(); changed(); toast("Added to Ideas. Claude can turn it into a full card next session.");
+    };
+    title.addEventListener("keydown", e=>{ if (e.key==="Enter") go(); });
+    return [
+      h("h2",{}, "Quick idea"),
+      h("div",{class:"sub"}, "Lands at the top of Ideas, tagged inbox."),
+      field("Idea", title),
+      field("Why / details", why),
+      h("div",{class:"f"}, h("span",{},"Kind"), seg([["idea","Idea"],["bug","Bug"]], kind, v=>kind=v)),
+      h("div",{class:"f"}, h("span",{},"Part (optional)"), seg([["","Not sure"], ...areas().map(a=>[a,a])], area, v=>area=v)),
+      h("div",{class:"actions"}, h("button",{type:"button",class:"btn primary",onclick:go}, "Add idea"), h("button",{type:"button",class:"btn",onclick:close}, "Cancel"))
+    ];
+  });
+}
+
+function openSetup(first){
+  sheet(close => {
+    const token = h("input",{type:"password",value:cfg.token||"",placeholder:"github_pat_…",autocomplete:"off",autofocus:true});
+    const repo = h("input",{type:"text",value:cfg.repo});
+    const branch = h("input",{type:"text",value:cfg.branch});
+    const theme = LS.get("theme","auto");
+    return [
+      h("h2",{}, first ? "Connect to GitHub" : "Settings"),
+      h("div",{class:"note"},
+        h("p",{}, "This page reads and saves the ideas board (", h("code",{},"plan/board.json"), ") straight in your GitHub repo. The token stays in this browser only."),
+        first && h("ol",{class:"steps"},
+          h("li",{html:'On GitHub: <b>Settings → Developer settings → Fine-grained tokens → Generate new token</b>.'}),
+          h("li",{html:'Repository access: <b>Only select repositories → warmth-vst</b>.'}),
+          h("li",{html:'Permissions: <b>Contents → Read and write</b>. Nothing else. Pick an expiry (a year is fine).'}),
+          h("li",{}, "Copy the token and paste it here."))),
+      field("Token", token),
+      h("div",{class:"row"}, field("Repo", repo), field("Branch", branch)),
+      h("div",{class:"f"}, h("span",{},"Look"), seg([["auto","Like my device"],["light","Light"],["dark","Dark"]], theme, v=>{ LS.set("theme",v); applyTheme(); })),
+      h("div",{class:"actions"},
+        h("button",{type:"button",class:"btn primary",onclick:async()=>{
+          const changedRepo = repo.value.trim()!==cfg.repo || branch.value.trim()!==cfg.branch;
+          cfg = {token: token.value.trim(), repo: repo.value.trim()||"Troos88/warmth-vst", branch: branch.value.trim()||"main"};
+          LS.set("cfg", cfg);
+          if (changedRepo){ mem.base=mem.ours=mem.sha=null; dirty=0; LS.del("draft"); }
+          close(); start();
+        }}, "Connect"),
+        !first && h("button",{type:"button",class:"btn",onclick:close}, "Close"),
+        h("div",{style:"flex:1"}),
+        !first && h("button",{type:"button",class:"btn danger",onclick:()=>{ LS.del("cfg"); LS.del("draft"); location.reload(); }}, "Forget token"))
+    ];
+  });
+}
+async function openTour(){
+  let plan;
+  try { plan = JSON.parse(await gh("GET", null, true, "plan/test-tour.json")); }
+  catch(e){ toast(e.status===404 ? "No test tour on GitHub yet." : e.message); return; }
+  const r = tourRows(plan, mem.ours || {cards:[]});
+  const mins = n => n < 90 ? `about ${n} min` : `about ${Math.floor(n/60)} h ${pad(n%60)} min`;
+  let k = 0;
+  sheet(close => [
+    h("h2",{}, "Morning test tour"),
+    h("div",{class:"sub"}, `${r.steps} checks · ${mins(r.minutes)} + ${mins(r.robot)} robot · ${r.cardsDone} of ${r.cards} cards done · plan of ${r.made}`),
+    h("div",{class:"note"}, "Do the tour in Kolvind Watchtower on the PC (press Morning test tour): it records Pass / Fail and moves the cards. This list is read-only; ✓ = its card is in Done."),
+    ...r.groups.map(g => h("div",{},
+      h("div",{class:"tg"}, g.title, g.fresh ? " · NEW" : "", h("small",{}, `  ${g.steps.length} · ${mins(g.steps.reduce((a,s)=>a+s.minutes,0))}`)),
+      h("div",{class:"tprep"}, g.prepare),
+      ...g.steps.map(s => h("div",{class:"tstep"+(s.done?" done":"")},
+        h("div",{class:"t"}, `${++k}. ${s.title}`, h("span",{class:"note"}, ` ${s.minutes} min`)),
+        h("div",{class:"d"}, "Do: " + s.short_do), h("div",{class:"d"}, "Expect: " + s.short_expect))))),
+    h("div",{class:"actions"}, h("button",{type:"button",class:"btn primary",onclick:close}, "Close"))
+  ]);
+}
+/* ================================================================ the robot from the phone */
+async function robotRead(name){
+  try { return await gh("GET", null, true, name, ROBOT_BRANCH); }
+  catch(e){ if (e.status === 404) return null; throw e; }
+}
+async function robotFetch(){
+  const [st, rq, br] = await Promise.all([robotRead("status.json"), robotRead("request.json"), robotRead("branches.json")]);
+  const parse = t => { try { const d = JSON.parse(t); return d && typeof d === "object" ? d : null; } catch { return null; } };
+  return {status: st == null ? null : (parse(st) || {}), request: rq == null ? null : parse(rq), branches: br == null ? [] : (parse(br) || [])};
+}
+/* Every press is signed with the pairing code from Mobilroboten.bat (stored only in this browser): only this phone can
+   start anything on the PC, not everyone else with access to the repo. Same text as signed_text() in robot_listener.py. */
+function robotCodeNorm(c){ c = String(c||"").replace(/[^A-Za-z0-9]/g,"").toUpperCase(); return c.length === 16 ? c : ""; }
+async function robotSign(code, req){
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(robotCodeNorm(code)), {name:"HMAC", hash:"SHA-256"}, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(`${req.id}|${req.asked}|${req.action}|${req.branch||""}`));
+  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2,"0")).join("");
+}
+async function robotPress(action, branch){
+  let sha;
+  try { sha = (await gh("GET", null, false, "request.json", ROBOT_BRANCH)).sha; }
+  catch(e){ if (e.status !== 404) throw e; }
+  const d = new Date(), id = "r-" + d.getTime().toString(36);
+  const req = Object.assign({id, asked: d.toISOString().slice(0,19) + "Z", action}, action === "install" ? {branch} : {});
+  req.sig = await robotSign(LS.get("robotCode",""), req);
+  const what = action === "install" ? `Uppdatera och installera ${branch}` : "Kör roboten";
+  await gh("PUT", Object.assign({message:`Robot: Tobias pressed ${what} (Watchtower Web)`, content: textToB64(JSON.stringify(req) + "\n"), branch: ROBOT_BRANCH}, sha ? {sha} : {}));
+}
+function robotCopy(text){
+  const done = () => toast("Testloggen är kopierad. Klistra in den till Claude.");
+  if (navigator.clipboard && window.isSecureContext)
+    return navigator.clipboard.writeText(text).then(done, () => robotCopyByHand(text));
+  robotCopyByHand(text);
+}
+function robotCopyByHand(text){ // the phone said no to the clipboard: show the log selected, copy from the menu
+  sheet(close => {
+    const ta = h("textarea",{class:"rb-copy",readonly:true}, text);
+    setTimeout(()=>{ ta.focus(); ta.select(); ta.setSelectionRange(0, text.length); }, 50);
+    return [h("h2",{}, "Kopiera testloggen"), h("div",{class:"note"}, "Telefonen lät inte sidan kopiera. Håll fingret på texten, välj Markera alla och sedan Kopiera."),
+      ta, h("div",{class:"actions"}, h("button",{type:"button",class:"btn primary",onclick:close}, "Klar"))];
+  });
+}
+function openRobot(){
+  let data = null, log = null, err = "", busy = false, timer = null, draw = () => {}, picked = LS.get("robotBranch", ""), pairing = false;
+  const box = h("div",{});
+  const load = async () => {
+    if (timer && !box.isConnected){ clearInterval(timer); return; }   // closed, or another sheet took its place
+    try {
+      data = await robotFetch(); err = "";
+      const v = robotView(data.status, data.request, Date.now());
+      if (v.canCopy && log === null) log = await robotRead("log.txt");
+      if (!v.canCopy) log = null;
+    } catch(e){ err = e.message; }
+    if (!askingCode()) draw();                       // never wipe a code being typed
+  };
+  const askingCode = () => pairing || !robotCodeNorm(LS.get("robotCode",""));
+  sheet(close => {
+    const run = async (action, branch) => {
+      if (busy) return; busy = true; draw();
+      try { await robotPress(action, branch); log = null; toast("Skickat till datorn."); await load(); }
+      catch(e){ toast(e.status===404 || e.status===422 ? "Mobilroboten är inte igång på datorn än." : e.message); }
+      busy = false; draw();
+    };
+    draw = () => {
+      if (askingCode()){
+        const inp = h("input",{type:"text",placeholder:"XXXX-XXXX-XXXX-XXXX",autocomplete:"off",autocapitalize:"characters",spellcheck:"false"});
+        const save = () => { if (!robotCodeNorm(inp.value)){ toast("Koden har 16 tecken, t.ex. K7QF-2MXP-9ZTR-4HDA."); return; }
+          LS.set("robotCode", robotCodeNorm(inp.value)); pairing = false; toast("Parkoden är sparad i den här mobilen."); draw(); };
+        box.replaceChildren(
+          h("div",{class:"rb-state"}, h("div",{class:"big"}, "Skriv in parkoden"),
+            h("div",{class:"d"}, "Dubbelklicka Mobilroboten.bat på datorn (GitHub Desktop → Repository → Show in Explorer → tools → release_test). Den visar en kod med 16 tecken. Skriv in den här en gång – då kan bara din mobil starta något på datorn.")),
+          field("Parkod", inp),
+          h("div",{class:"actions"}, h("button",{type:"button",class:"btn primary wide",onclick:save}, "Spara parkod"),
+            robotCodeNorm(LS.get("robotCode","")) && h("button",{type:"button",class:"btn wide",onclick:()=>{ pairing = false; draw(); }}, "Avbryt")));
+        return;
+      }
+      if (!data){ box.replaceChildren(h("div",{class:"note"}, err || "Hämtar…")); return; }
+      const v = robotView(data.status, data.request, Date.now());
+      const pk = robotPick(data.branches, picked);
+      const sel = pk.list.length ? h("select",{class:"sel",style:"max-width:none;width:100%",onchange:e=>{ picked = e.target.value; LS.set("robotBranch", picked); draw(); }},
+        ...pk.list.map(b => h("option",{value:b.name, selected: pk.sel && b.name === pk.sel.name}, b.name + (b.current ? " (installerad)" : "") + (b.date ? "  · " + b.date : "")))) : null;
+      box.replaceChildren(...[
+        h("div",{class:"rb-state " + v.kind},
+          h("div",{class:"big"}, v.title),
+          v.text && h("div",{class:"d"}, v.text),
+          v.now && h("div",{class:"d note"}, "Just nu: " + v.now),
+          v.total && h("div",{class:"rb-tot"}, h("span",{class:"p"}, `✓ ${v.total.pass} godkända`), h("span",{class:"f"}, `✗ ${v.total.fail} fel`), h("span",{class:"s"}, `${v.total.skip} hoppades över`))),
+        v.fails.length ? h("div",{class:"tg"}, "Det här gick fel") : null,
+        ...v.fails.map(f => h("div",{class:"rb-fail"}, h("div",{class:"t"}, f.title || f.id), f.note && h("div",{class:"n"}, f.note))),
+        err && h("div",{class:"note"}, err),
+        sel && h("label",{class:"f"}, h("span",{}, "Branch"), sel),
+        pk.sel && pk.sel.note && h("div",{class:"note"}, pk.sel.note),
+        pk.hint && h("div",{class:"note"}, pk.hint),
+        v.pc && h("div",{class:"rb-pc"}, v.pc),
+        h("div",{class:"actions"},
+          sel && h("button",{type:"button",class:"btn wide" + (pk.canRunHere ? "" : " primary"),disabled: !v.canRun || !pk.canInstall || busy,
+            onclick:()=>run("install", pk.sel.name)}, busy ? "Skickar…" : "⬇️ Uppdatera och installera"),
+          h("button",{type:"button",class:"btn wide" + (pk.canRunHere || !sel ? " primary" : ""),disabled: !v.canRun || busy || (sel && !pk.canRunHere),
+            onclick:()=>run("run")}, busy ? "Skickar…" : "🤖 Kör roboten"),
+          v.canCopy && h("button",{type:"button",class:"btn wide",disabled: log == null,onclick:()=>robotCopy(log)}, log == null ? "Hämtar testloggen…" : "📋 Kopiera testloggen"),
+          h("button",{type:"button",class:"btn wide",onclick:close}, "Stäng")),
+        h("div",{class:"note",style:"text-align:center;margin-top:6px"}, h("a",{href:"#",onclick:e=>{ e.preventDefault(); pairing = true; draw(); }}, "Byt parkod"))].filter(Boolean));
+    };
+    draw();
+    return [h("h2",{}, "Roboten"), h("div",{class:"sub"}, "Välj branch, installera den på datorn och låt roboten testa Kolvind (pluginval, REAPER-roboten och ljudkollarna)."), box];
+  }, () => clearInterval(timer));
+  load(); timer = setInterval(load, 15000);
+}
+function applyTheme(){ const t = LS.get("theme","auto"); if (t==="auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", t); }
+
+/* ================================================================ start */
+function start(){
+  if (!cfg.token){ status("", "Not connected"); openSetup(true); return; }
+  const draft = LS.get("draft", null);
+  if (draft && draft.repo===cfg.repo && draft.ours && !mem.ours){ mem.base=draft.base; mem.ours=draft.ours; mem.sha=draft.sha; dirty=draft.dirty||0; }
+  $("#app").classList.remove("hidden"); $("#fab").classList.remove("hidden");
+  render(); pull();
+}
+applyTheme();
+$("#q").addEventListener("input", e=>{ ui.q=e.target.value; render(); });
+$("#area").addEventListener("change", e=>{ ui.area=e.target.value; LS.set("area",ui.area); render(); });
+$("#waitOnly").addEventListener("click", ()=>{ ui.waitOnly=!ui.waitOnly; LS.set("waitOnly",ui.waitOnly); render(); });
+$("#addBtn").addEventListener("click", openAdd);
+$("#fab").addEventListener("click", openAdd);
+$("#tourBtn").addEventListener("click", ()=>{ if (cfg.token) openTour(); else openSetup(true); });
+$("#robotBtn").addEventListener("click", ()=>{ if (cfg.token) openRobot(); else openSetup(true); });
+$("#syncBtn").addEventListener("click", ()=>{ if (dirty) save(); else pull(); });
+$("#setupBtn").addEventListener("click", ()=>openSetup(false));
+document.addEventListener("visibilitychange", ()=>{ if (document.visibilityState==="visible" && cfg.token && mem.ours && !drag) { dirty ? save() : pull(true); } });
+addEventListener("online", ()=>{ if (dirty) save(); });
+addEventListener("keydown", e=>{ if (e.key==="Escape") { const s=$(".scrim"); if (s) s.click(); } });
+start();
+})();
+</script>
+</body>
+</html>
