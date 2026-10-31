@@ -164,6 +164,9 @@ ol.steps li{margin:6px 0}
 .rb-pc{color:var(--muted);font-size:13px;margin-top:10px}
 .rb-copy{width:100%;min-height:160px;font:12px/1.35 var(--mono);border:1px solid var(--line);border-radius:9px;background:var(--panel2);padding:8px}
 .btn.wide{flex:1 1 100%}
+.rb-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.rb-row .btn{flex:1 1 140px}
+.rb-words{width:100%;margin-top:8px;border:1px solid var(--line);background:var(--panel);border-radius:9px;padding:9px 10px;font:inherit;color:inherit}
 .rb-steps{list-style:none;margin:10px 0 0;padding:0}
 .rb-steps li{display:flex;align-items:center;gap:9px;padding:4px 0;font-size:15px}
 .rb-steps .dot{width:20px;text-align:center;flex:none}
@@ -308,7 +311,7 @@ function checkMerge(ours, merged){ // same guard as check_merge() in board.py: n
 /* The robot from the phone (2026-10-29, tools/release_test/robot_listener.py): what to show for the robot branch's
    status.json and request.json. status = null when the branch has no status (the PC has never listened). nowMs = Date.now(). */
 const ROBOT_BRANCH = "robot";
-const PAGE_VERSION = "31 okt kväll";   // shown at the bottom of 🤖: lets Tobias see that the phone has the newest page
+const PAGE_VERSION = "1 nov";   // shown at the bottom of 🤖: lets Tobias see that the phone has the newest page
 function robotTime(iso, nowMs){
   const t = Date.parse(iso||""); if (isNaN(t)) return "";
   const d = new Date(t), n = new Date(nowMs), hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -371,8 +374,19 @@ function robotPick(branches, picked){
     out.hint = `Datorn har ${cur.name} installerad. Tryck Uppdatera och installera för att byta till ${sel.name}, sedan Kör roboten.`;
   return out;
 }
+/* The "waiting for you" box (2026-10-31): waiting = waiting.json from the PC, done = ids answered on this phone just now. */
+function reviewSummary(waiting, done, nowMs){
+  const items = (waiting && Array.isArray(waiting.items) ? waiting.items : []).filter(i => i && (i.kind === "pic" || i.kind === "sound")
+                && typeof i.check === "string" && !(done || []).includes(i.kind + "|" + i.check));
+  const pics = items.filter(i => i.kind === "pic").length, sounds = items.filter(i => i.kind === "sound").length;
+  const parts = [pics && `${pics} ${pics === 1 ? "bild" : "bilder"}`, sounds && `${sounds} ljud`].filter(Boolean);
+  const l = waiting && waiting.last, at = l ? Date.parse(l.at || "") : NaN;
+  const fresh = l && typeof l.text === "string" && l.text && !isNaN(at) && (nowMs || Date.now()) - at < 864e5;
+  return {items, pics, sounds, text: parts.length ? "Väntar på dig: " + parts.join(" och ") : "",
+          last: fresh ? `${robotTime(l.at, nowMs || Date.now())}: ${l.text}`.replace(/^kl\. /, "Kl. ").replace(/^igår/, "Igår") : ""};
+}
 // for the parity test (node): module.exports when there is no window
-if (typeof window === "undefined") { module.exports = {dumps, merge, checkMerge, move, add, renumber, eq, tourRows, robotView, robotTime, robotPick, ROBOT_BRANCH, PAGE_VERSION}; }
+if (typeof window === "undefined") { module.exports = {dumps, merge, checkMerge, move, add, renumber, eq, tourRows, robotView, robotTime, robotPick, ROBOT_BRANCH, PAGE_VERSION, reviewSummary}; }
 </script>
 <script>
 "use strict";
@@ -776,18 +790,34 @@ async function robotRead(name){
   catch(e){ if (e.status === 404) return null; throw e; }
 }
 async function robotFetch(){
-  const [st, rq, br] = await Promise.all([robotRead("status.json"), robotRead("request.json"), robotRead("branches.json")]);
+  const [st, rq, br, wt] = await Promise.all([robotRead("status.json"), robotRead("request.json"), robotRead("branches.json"), robotRead("waiting.json")]);
   const parse = t => { try { const d = JSON.parse(t); return d && typeof d === "object" ? d : null; } catch { return null; } };
-  return {status: st == null ? null : (parse(st) || {}), request: rq == null ? null : parse(rq), branches: br == null ? [] : (parse(br) || [])};
+  return {status: st == null ? null : (parse(st) || {}), request: rq == null ? null : parse(rq), branches: br == null ? [] : (parse(br) || []),
+          waiting: await robotPage(parse(wt), LS.get("robotCode",""))};
 }
 /* Every press is signed with the pairing code from Mobilroboten.bat (stored only in this browser): only this phone can
    start anything on the PC, not everyone else with access to the repo. Same text as signed_text() in robot_listener.py. */
 function robotCodeNorm(c){ c = String(c||"").replace(/[^A-Za-z0-9]/g,"").toUpperCase(); return c.length === 16 ? c : ""; }
-async function robotSign(code, req){
+async function robotHmac(code, text){
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey("raw", enc.encode(robotCodeNorm(code)), {name:"HMAC", hash:"SHA-256"}, false, ["sign"]);
-  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(`${req.id}|${req.asked}|${req.action}|${req.branch||""}`));
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(text));
   return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2,"0")).join("");
+}
+async function robotSign(code, req){ return robotHmac(code, `${req.id}|${req.asked}|${req.action}|${req.branch||""}`); }
+/* waiting.json is {body, sig}: shown only when this PC signed it with the pairing code (anyone else with access to the repo
+   could otherwise swap a picture or a title, and Tobias would answer for the wrong check). null when missing or not signed. */
+async function robotPage(w, code){
+  if (!w || typeof w.body !== "string" || typeof w.sig !== "string" || !robotCodeNorm(code)) return null;
+  if (await robotHmac(code, "waiting|" + w.body) !== w.sig.toLowerCase()) return null;
+  try { const d = JSON.parse(w.body); return d && typeof d === "object" && /^[0-9a-f]{40}$|^$/.test(d.media || "") ? d : null; } catch { return null; }
+}
+/* An answer to a look or listen (2026-10-31): signed over every field, the same text as answer_text() in phone_review.py. */
+async function robotAnswer(code, media, kind, check, ok, words, date){
+  const a = {id: "a-" + date.getTime().toString(36) + "-" + Math.floor(Math.random()*1e6).toString(36), asked: date.toISOString().slice(0,19) + "Z",
+             media, kind, check, ok: !!ok, words: String(words||"").replace(/[\u0000-\u001f\u007f]+/g," ").trim().slice(0,300)};
+  a.sig = await robotHmac(code, [a.id, a.asked, "answer", a.media, a.kind, a.check, a.ok ? "1" : "0", a.words].join("|"));
+  return a;
 }
 /* What a press writes: ALWAYS request.json on the robot branch (2026-10-31: the PUT left out the path, so gh() used its
    default, plan/board.json - the PC never saw a press, and every later press was refused by GitHub). Tested with node. */
@@ -819,6 +849,99 @@ function robotCopyByHand(text){ // the phone said no to the clipboard: show the 
     return [h("h2",{}, "Kopiera testloggen"), h("div",{class:"note"}, "Telefonen lät inte sidan kopiera. Håll fingret på texten, välj Markera alla och sedan Kopiera."),
       ta, h("div",{class:"actions"}, h("button",{type:"button",class:"btn primary",onclick:close}, "Klar"))];
   });
+}
+/* ================================================================ look and listen (2026-10-31) */
+let reviewDone = [];                                  // kind|check answered on this phone (until the PC's list catches up)
+const mediaCache = new Map();
+const MEDIA_PATH = /^(pic|sound)\/[A-Za-z0-9_-]{1,80}-[0-9]+(-now|-before)?\.(png|wav)$/;
+async function mediaUrl(sha, path){
+  if (!/^[0-9a-f]{40}$/.test(sha || "") || !MEDIA_PATH.test(path || "")) throw new Error("okänd fil");
+  const k = sha + ":" + path;
+  if (!mediaCache.has(k)){
+    const url = `https://api.github.com/repos/${cfg.repo}/contents/${path}?ref=${encodeURIComponent(sha)}`;
+    const r = await fetch(url, {headers:{"Authorization":`Bearer ${cfg.token}`,"Accept":"application/vnd.github.raw","X-GitHub-Api-Version":"2022-11-28"}});
+    if (!r.ok) throw new Error(explain(r.status, ""));
+    mediaCache.set(k, URL.createObjectURL(await r.blob()));
+  }
+  return mediaCache.get(k);
+}
+async function sendAnswer(media, kind, check, ok, words){
+  const a = await robotAnswer(LS.get("robotCode",""), media, kind, check, ok, words, new Date());
+  for (let attempt = 0; attempt < 4; attempt++){
+    let sha, list = [];
+    try {
+      const j = await gh("GET", null, false, "answers.json", ROBOT_BRANCH);
+      sha = j.sha;
+      try { const d = JSON.parse(b64ToText(j.content || "")); if (Array.isArray(d)) list = d; } catch {}
+    } catch(e){ if (e.status !== 404) throw e; }
+    const cutoff = Date.now() - 2 * 864e5;            // keep the file small: answers the PC has had for days go
+    list = list.filter(x => x && Date.parse(x.asked || "") > cutoff).slice(-49);
+    list.push(a);
+    try {
+      await gh("PUT", Object.assign({message:`Robot: Tobias answered ${kind} ${check} (Watchtower Web)`,
+        content: textToB64(JSON.stringify(list, null, 1) + "\n"), branch: ROBOT_BRANCH}, sha ? {sha} : {}), false, "answers.json");
+      return;
+    } catch(e){ if (e.message !== "conflict") throw e; }
+  }
+  throw new Error("Det gick inte att spara svaret. Tryck igen.");
+}
+function openReview(waiting, rv, after){
+  const media = waiting && typeof waiting.media === "string" ? waiting.media : "";
+  sheet(close => {
+    const list = h("div",{});
+    const answer = async (it, ok, card, words) => {
+      card.querySelectorAll("button").forEach(b => b.disabled = true);
+      try {
+        await sendAnswer(media, it.kind, it.check, ok, words);
+        reviewDone.push(it.kind + "|" + it.check);
+        card.replaceChildren(h("div",{class:"d"}, `✓ ${it.title}: ${ok ? (it.kind === "pic" ? "ser rätt ut" : "låter rätt") : "något är fel"} – skickat till datorn.`),
+          h("div",{class:"note"}, "Tryckte du fel? Ändra det i Watchtower på datorn."));
+        if (!list.querySelector("button")) toast("Klart! Datorn sparar svaren när den är igång – oftast inom en minut.");
+      } catch(e){ toast(e.message); card.querySelectorAll("button").forEach(b => b.disabled = false); }
+    };
+    const verdictRow = (it, card) => {
+      const words = h("textarea",{rows:"2",class:"rb-words",placeholder:"Vad är fel? Några ord (Claude läser dem)."});
+      const wrongBox = h("div",{class:"hidden"}, words,
+        h("div",{class:"rb-row"}, h("button",{type:"button",class:"btn primary wide",onclick:()=>answer(it, false, card, words.value)}, "Skicka")));
+      const okLabel = it.kind === "pic" ? "👍 Den nya ser rätt ut" : "👍 Låter rätt";
+      return [h("div",{class:"rb-row"},
+        h("button",{type:"button",class:"btn primary",onclick:()=>answer(it, true, card, "")}, okLabel),
+        h("button",{type:"button",class:"btn",onclick:()=>{ wrongBox.classList.toggle("hidden"); if (!wrongBox.classList.contains("hidden")) words.focus(); }}, "👎 Något är fel")), wrongBox];
+    };
+    for (const it of rv.items){
+      const card = h("div",{class:"rb-state"});
+      card.append(h("div",{class:"big"}, it.title || it.check));
+      if (it.kind === "pic"){
+        card.append(h("div",{class:"d"}, "Titta efter: " + (it.look_for || "")));
+        for (const p of it.pictures || []){
+          const now = h("img",{alt:"Nu",style:"width:100%;border-radius:8px;border:1px solid var(--line);margin-top:6px"});
+          const before = p.before ? h("img",{alt:"Förut",style:"width:100%;border-radius:8px;border:1px solid var(--line);margin-top:6px"}) : null;
+          card.append(h("div",{class:"tg"}, p.what || "Bild"),
+            before && h("div",{class:"note"}, "Förut (den du godkände):"), before,
+            h("div",{class:"note"}, before ? "Nu:" : "Nu (ny bild):"), now);
+          mediaUrl(media, p.now).then(u => now.src = u, e => now.replaceWith(h("div",{class:"note"}, "Bilden gick inte att hämta: " + e.message)));
+          if (before) mediaUrl(media, p.before).then(u => before.src = u, () => {});
+        }
+      } else {
+        card.append(h("div",{class:"d"}, (it.robot === "fail" ? "Roboten tyckte att det var FEL – låter det rätt för dig gäller ditt svar. " : "Roboten tyckte att det var rätt. ") + "Lyssna efter: " + (it.listen_for || "")));
+        if (it.pc_only) card.append(h("div",{class:"note"}, "Alla ljud kom inte med till mobilen (för mycket på en gång). Lyssna på den här i Watchtower på datorn, knappen Listen, och svara där."));
+        for (const snd of it.sounds || []){
+          const slot = h("div",{});
+          const get = h("button",{type:"button",class:"btn wide",onclick:async()=>{
+            get.disabled = true; get.textContent = "Hämtar…";
+            try { const u = await mediaUrl(media, snd.file); slot.replaceChildren(h("div",{class:"note"}, snd.name), h("audio",{controls:true,src:u,preload:"auto",style:"width:100%"})); }
+            catch(e){ get.disabled = false; get.textContent = "▶ " + snd.name; toast("Ljudet gick inte att hämta: " + e.message); }
+          }}, "▶ " + snd.name);
+          slot.append(get); card.append(slot);
+        }
+      }
+      if (!(it.kind === "sound" && it.pc_only)) card.append(...verdictRow(it, card));   // never an answer for sounds he could not hear
+      list.append(card);
+    }
+    return [h("h2",{}, "Titta och lyssna"),
+      h("div",{class:"sub"}, "Hörlurar hjälper. Ditt svar räknas precis som om du tryckte i Watchtower på datorn."),
+      list, h("div",{class:"actions"}, h("button",{type:"button",class:"btn wide",onclick:close}, "Stäng"))];
+  }, after);
 }
 function openRobot(){
   let data = null, log = null, err = "", busy = false, timer = null, draw = () => {}, picked = LS.get("robotBranch", ""), pairing = false;
@@ -856,6 +979,7 @@ function openRobot(){
       }
       if (!data){ box.replaceChildren(h("div",{class:"note"}, err || "Hämtar…")); return; }
       const v = robotView(data.status, data.request, Date.now());
+      const rv = reviewSummary(data.waiting, reviewDone);
       const pk = robotPick(data.branches, picked);
       const sel = pk.list.length ? h("select",{class:"sel",style:"max-width:none;width:100%",onchange:e=>{ picked = e.target.value; LS.set("robotBranch", picked); draw(); }},
         ...pk.list.map(b => h("option",{value:b.name, selected: pk.sel && b.name === pk.sel.name}, b.name + (b.current ? " (installerad)" : "") + (b.date ? "  · " + b.date : "")))) : null;
@@ -868,6 +992,11 @@ function openRobot(){
           v.elapsed && h("div",{class:"d"}, v.elapsed),
           v.now && !v.steps.length && h("div",{class:"d note"}, "Just nu: " + v.now),   // the steps say it in Swedish
           v.total && h("div",{class:"rb-tot"}, h("span",{class:"p"}, `✓ ${v.total.pass} godkända`), h("span",{class:"f"}, `✗ ${v.total.fail} fel`), h("span",{class:"s"}, `${v.total.skip} hoppades över`))),
+        rv.text && h("div",{class:"rb-state busy"}, h("div",{class:"big"}, rv.text),
+          h("div",{class:"d"}, "Bilderna och ljuden roboten vill att du tittar och lyssnar på."),
+          h("div",{class:"rb-row"},
+            h("button",{type:"button",class:"btn primary wide",onclick:()=>openReview(data.waiting, rv, ()=>openRobot())}, "👀 Titta och lyssna"))),
+        rv.last && h("div",{class:"note"}, rv.last),
         v.fails.length ? h("div",{class:"tg"}, "Det här gick fel") : null,
         ...v.fails.map(f => h("div",{class:"rb-fail"}, h("div",{class:"t"}, f.title || f.id), f.note && h("div",{class:"n"}, f.note))),
         err && h("div",{class:"note"}, err),
