@@ -305,9 +305,9 @@ const ROBOT_BRANCH = "robot";
 function robotTime(iso, nowMs){
   const t = Date.parse(iso||""); if (isNaN(t)) return "";
   const d = new Date(t), n = new Date(nowMs), hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  if (d.toDateString() === n.toDateString()) return hm;
-  if (new Date(nowMs - 864e5).toDateString() === d.toDateString()) return "igår " + hm;
-  return `${d.getDate()}/${d.getMonth()+1} ${hm}`;
+  if (d.toDateString() === n.toDateString()) return "kl. " + hm;
+  if (new Date(nowMs - 864e5).toDateString() === d.toDateString()) return "igår kl. " + hm;
+  return `${d.getDate()}/${d.getMonth()+1} kl. ${hm}`;
 }
 function robotView(status, request, nowMs){
   const mins = iso => (nowMs - Date.parse(iso||"")) / 60000;
@@ -316,7 +316,7 @@ function robotView(status, request, nowMs){
     return Object.assign(v, {kind:"bad", title:"Mobilroboten är inte igång på datorn",
       text:"Gör så här en gång på datorn: öppna GitHub Desktop, välj Repository → Show in Explorer, gå till tools → release_test och dubbelklicka Mobilroboten.bat. Den visar en parkod som du skriver in här. Sedan startar den av sig själv varje gång du loggar in."});
   }
-  if (status.listening_since) v.pc = "Mobilroboten startade på datorn kl. " + robotTime(status.listening_since, nowMs) + ".";
+  if (robotTime(status.listening_since, nowMs)) v.pc = "Mobilroboten startade på datorn " + robotTime(status.listening_since, nowMs) + ".";
   const req = request && typeof request.id === "string" && request.id ? request : null;
   if (req && req.id !== status.id){
     const m = mins(req.asked);
@@ -361,7 +361,7 @@ function robotPick(branches, picked){
   return out;
 }
 // for the parity test (node): module.exports when there is no window
-if (typeof window === "undefined") { module.exports = {dumps, merge, checkMerge, move, add, renumber, eq, tourRows, robotView, robotTime, robotPick}; }
+if (typeof window === "undefined") { module.exports = {dumps, merge, checkMerge, move, add, renumber, eq, tourRows, robotView, robotTime, robotPick, ROBOT_BRANCH}; }
 </script>
 <script>
 "use strict";
@@ -778,15 +778,22 @@ async function robotSign(code, req){
   const sig = await crypto.subtle.sign("HMAC", key, enc.encode(`${req.id}|${req.asked}|${req.action}|${req.branch||""}`));
   return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2,"0")).join("");
 }
-async function robotPress(action, branch){
-  let sha;
-  try { sha = (await gh("GET", null, false, "request.json", ROBOT_BRANCH)).sha; }
-  catch(e){ if (e.status !== 404) throw e; }
-  const d = new Date(), id = "r-" + d.getTime().toString(36);
-  const req = Object.assign({id, asked: d.toISOString().slice(0,19) + "Z", action}, action === "install" ? {branch} : {});
-  req.sig = await robotSign(LS.get("robotCode",""), req);
+/* What a press writes: ALWAYS request.json on the robot branch (2026-10-31: the PUT left out the path, so gh() used its
+   default, plan/board.json - the PC never saw a press, and every later press was refused by GitHub). Tested with node. */
+const ROBOT_REQUEST = "request.json";
+async function robotRequest(action, branch, code, date){
+  const req = Object.assign({id: "r-" + date.getTime().toString(36), asked: date.toISOString().slice(0,19) + "Z", action},
+                            action === "install" ? {branch} : {});
+  req.sig = await robotSign(code, req);
   const what = action === "install" ? `Uppdatera och installera ${branch}` : "Kör roboten";
-  await gh("PUT", Object.assign({message:`Robot: Tobias pressed ${what} (Watchtower Web)`, content: textToB64(JSON.stringify(req) + "\n"), branch: ROBOT_BRANCH}, sha ? {sha} : {}));
+  return {path: ROBOT_REQUEST, ref: ROBOT_BRANCH, message: `Robot: Tobias pressed ${what} (Watchtower Web)`, text: JSON.stringify(req) + "\n"};
+}
+async function robotPress(action, branch){
+  const r = await robotRequest(action, branch, LS.get("robotCode",""), new Date());
+  let sha;
+  try { sha = (await gh("GET", null, false, r.path, r.ref)).sha; }
+  catch(e){ if (e.status !== 404) throw e; }
+  await gh("PUT", Object.assign({message: r.message, content: textToB64(r.text), branch: r.ref}, sha ? {sha} : {}), false, r.path);
 }
 function robotCopy(text){
   const done = () => toast("Testloggen är kopierad. Klistra in den till Claude.");
@@ -820,7 +827,7 @@ function openRobot(){
     const run = async (action, branch) => {
       if (busy) return; busy = true; draw();
       try { await robotPress(action, branch); log = null; toast("Skickat till datorn."); await load(); }
-      catch(e){ toast(e.status===404 || e.status===422 ? "Mobilroboten är inte igång på datorn än." : e.message); }
+      catch(e){ toast(e.status===404 ? "Mobilroboten är inte igång på datorn än." : e.message==="conflict" ? "Datorn hann ändra något samtidigt. Tryck igen." : e.message); }
       busy = false; draw();
     };
     draw = () => {
