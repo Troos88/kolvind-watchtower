@@ -164,6 +164,12 @@ ol.steps li{margin:6px 0}
 .rb-pc{color:var(--muted);font-size:13px;margin-top:10px}
 .rb-copy{width:100%;min-height:160px;font:12px/1.35 var(--mono);border:1px solid var(--line);border-radius:9px;background:var(--panel2);padding:8px}
 .btn.wide{flex:1 1 100%}
+.rb-steps{list-style:none;margin:10px 0 0;padding:0}
+.rb-steps li{display:flex;align-items:center;gap:9px;padding:4px 0;font-size:15px}
+.rb-steps .dot{width:20px;text-align:center;flex:none}
+.rb-steps li.todo{color:var(--muted)}
+.rb-steps li.now{font-weight:700}
+.rb-steps li.now .dot{animation:pulse 1.2s infinite}
 .btn:disabled{opacity:.45;cursor:default}
 </style>
 </head>
@@ -302,6 +308,7 @@ function checkMerge(ours, merged){ // same guard as check_merge() in board.py: n
 /* The robot from the phone (2026-10-29, tools/release_test/robot_listener.py): what to show for the robot branch's
    status.json and request.json. status = null when the branch has no status (the PC has never listened). nowMs = Date.now(). */
 const ROBOT_BRANCH = "robot";
+const PAGE_VERSION = "31 okt kväll";   // shown at the bottom of 🤖: lets Tobias see that the phone has the newest page
 function robotTime(iso, nowMs){
   const t = Date.parse(iso||""); if (isNaN(t)) return "";
   const d = new Date(t), n = new Date(nowMs), hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -311,7 +318,7 @@ function robotTime(iso, nowMs){
 }
 function robotView(status, request, nowMs){
   const mins = iso => (nowMs - Date.parse(iso||"")) / 60000;
-  const v = {kind:"", title:"", text:"", now:"", canRun:false, canCopy:false, total:null, fails:[], pc:""};
+  const v = {kind:"", title:"", text:"", now:"", canRun:false, canCopy:false, total:null, fails:[], pc:"", steps:[], elapsed:""};
   if (!status){
     return Object.assign(v, {kind:"bad", title:"Mobilroboten är inte igång på datorn",
       text:"Gör så här en gång på datorn: öppna GitHub Desktop, välj Repository → Show in Explorer, gå till tools → release_test och dubbelklicka Mobilroboten.bat. Den visar en parkod som du skriver in här. Sedan startar den av sig själv varje gång du loggar in."});
@@ -327,6 +334,10 @@ function robotView(status, request, nowMs){
   const st = status.state, inst = status.action === "install";
   if (st === "running"){
     const m = mins(status.started);
+    const labels = Array.isArray(status.steps) ? status.steps.filter(x => typeof x === "string") : [];
+    const at = Math.max(0, Math.min(labels.length - 1, Math.floor(Number(status.step) || 0)));
+    v.steps = labels.map((label, i) => ({label, state: i < at ? "done" : i === at ? "now" : "todo"}));
+    if (m >= 0) v.elapsed = m < 1 ? "Har precis börjat." : `Har hållit på i ${Math.floor(m)} min.`;
     Object.assign(v, {kind:"busy", title: inst ? `Installerar ${status.branch || ""}…` : "Roboten kör…", now: status.now || "",
       text: inst ? `Startade ${robotTime(status.started, nowMs)}. Det tar några minuter (längre första gången). Öppna inte REAPER.`
                  : `Startade ${robotTime(status.started, nowMs)}. Det tar ungefär 15–20 minuter. Låt datorn vara på och öppna inte REAPER.`});
@@ -361,7 +372,7 @@ function robotPick(branches, picked){
   return out;
 }
 // for the parity test (node): module.exports when there is no window
-if (typeof window === "undefined") { module.exports = {dumps, merge, checkMerge, move, add, renumber, eq, tourRows, robotView, robotTime, robotPick, ROBOT_BRANCH}; }
+if (typeof window === "undefined") { module.exports = {dumps, merge, checkMerge, move, add, renumber, eq, tourRows, robotView, robotTime, robotPick, ROBOT_BRANCH, PAGE_VERSION}; }
 </script>
 <script>
 "use strict";
@@ -852,7 +863,10 @@ function openRobot(){
         h("div",{class:"rb-state " + v.kind},
           h("div",{class:"big"}, v.title),
           v.text && h("div",{class:"d"}, v.text),
-          v.now && h("div",{class:"d note"}, "Just nu: " + v.now),
+          v.steps.length ? h("ol",{class:"rb-steps"}, ...v.steps.map(x => h("li",{class:x.state},
+            h("span",{class:"dot"}, x.state === "done" ? "✓" : x.state === "now" ? "●" : "○"), x.label))) : null,
+          v.elapsed && h("div",{class:"d"}, v.elapsed),
+          v.now && !v.steps.length && h("div",{class:"d note"}, "Just nu: " + v.now),   // the steps say it in Swedish
           v.total && h("div",{class:"rb-tot"}, h("span",{class:"p"}, `✓ ${v.total.pass} godkända`), h("span",{class:"f"}, `✗ ${v.total.fail} fel`), h("span",{class:"s"}, `${v.total.skip} hoppades över`))),
         v.fails.length ? h("div",{class:"tg"}, "Det här gick fel") : null,
         ...v.fails.map(f => h("div",{class:"rb-fail"}, h("div",{class:"t"}, f.title || f.id), f.note && h("div",{class:"n"}, f.note))),
@@ -868,7 +882,8 @@ function openRobot(){
             onclick:()=>run("run")}, busy ? "Skickar…" : "🤖 Kör roboten"),
           v.canCopy && h("button",{type:"button",class:"btn wide",disabled: log == null,onclick:()=>robotCopy(log)}, log == null ? "Hämtar testloggen…" : "📋 Kopiera testloggen"),
           h("button",{type:"button",class:"btn wide",onclick:close}, "Stäng")),
-        h("div",{class:"note",style:"text-align:center;margin-top:6px"}, h("a",{href:"#",onclick:e=>{ e.preventDefault(); pairing = true; draw(); }}, "Byt parkod"))].filter(Boolean));
+        h("div",{class:"note",style:"text-align:center;margin-top:6px"}, h("a",{href:"#",onclick:e=>{ e.preventDefault(); pairing = true; draw(); }}, "Byt parkod"),
+          " · sidan uppdaterad " + PAGE_VERSION)].filter(Boolean));
     };
     draw();
     return [h("h2",{}, "Roboten"), h("div",{class:"sub"}, "Välj branch, installera den på datorn och låt roboten testa Kolvind (pluginval, REAPER-roboten och ljudkollarna)."), box];
