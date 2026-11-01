@@ -311,7 +311,7 @@ function checkMerge(ours, merged){ // same guard as check_merge() in board.py: n
 /* The robot from the phone (2026-10-29, tools/release_test/robot_listener.py): what to show for the robot branch's
    status.json and request.json. status = null when the branch has no status (the PC has never listened). nowMs = Date.now(). */
 const ROBOT_BRANCH = "robot";
-const PAGE_VERSION = "1 nov";   // shown at the bottom of 🤖: lets Tobias see that the phone has the newest page
+const PAGE_VERSION = "1 nov förmiddag";   // shown at the bottom of 🤖: lets Tobias see that the phone has the newest page
 function robotTime(iso, nowMs){
   const t = Date.parse(iso||""); if (isNaN(t)) return "";
   const d = new Date(t), n = new Date(nowMs), hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -916,9 +916,10 @@ function openReview(waiting, rv, after){
         for (const p of it.pictures || []){
           const now = h("img",{alt:"Nu",style:"width:100%;border-radius:8px;border:1px solid var(--line);margin-top:6px"});
           const before = p.before ? h("img",{alt:"Förut",style:"width:100%;border-radius:8px;border:1px solid var(--line);margin-top:6px"}) : null;
-          card.append(h("div",{class:"tg"}, p.what || "Bild"),
+          // DOM append() writes null as the text "null" (2026-11-01: "nullnull" over every new picture): leave the empty ones out
+          card.append(...[h("div",{class:"tg"}, p.what || "Bild"),
             before && h("div",{class:"note"}, "Förut (den du godkände):"), before,
-            h("div",{class:"note"}, before ? "Nu:" : "Nu (ny bild):"), now);
+            h("div",{class:"note"}, before ? "Nu:" : "Nu (ny bild):"), now].filter(Boolean));
           mediaUrl(media, p.now).then(u => now.src = u, e => now.replaceWith(h("div",{class:"note"}, "Bilden gick inte att hämta: " + e.message)));
           if (before) mediaUrl(media, p.before).then(u => before.src = u, () => {});
         }
