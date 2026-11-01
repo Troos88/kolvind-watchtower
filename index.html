@@ -155,6 +155,8 @@ ol.steps li{margin:6px 0}
 .rb-state{border:1px solid var(--line);border-radius:12px;background:var(--panel2);padding:14px;margin:6px 0 4px}
 .rb-state .big{font-size:17px;font-weight:700}
 .rb-state .d{margin-top:4px;font-size:14.5px}
+.rb-claude{margin-top:8px;padding:8px 10px;border-radius:8px;font-size:14px;border:1px solid var(--line)}
+.rb-claude.problem{border-color:var(--fail);background:var(--fail-bg)} .rb-claude.ok{border-color:var(--pass)}
 .rb-state.ok{border-color:var(--pass)} .rb-state.bad{border-color:var(--fail);background:var(--fail-bg)} .rb-state.busy{border-color:var(--ember);background:var(--amber-bg)}
 .rb-tot{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 16px;margin-top:8px;font-weight:700;font-size:15px}
 .rb-tot span{white-space:nowrap}
@@ -311,7 +313,7 @@ function checkMerge(ours, merged){ // same guard as check_merge() in board.py: n
 /* The robot from the phone (2026-10-29, tools/release_test/robot_listener.py): what to show for the robot branch's
    status.json and request.json. status = null when the branch has no status (the PC has never listened). nowMs = Date.now(). */
 const ROBOT_BRANCH = "robot";
-const PAGE_VERSION = "1 nov förmiddag";   // shown at the bottom of 🤖: lets Tobias see that the phone has the newest page
+const PAGE_VERSION = "1 nov eftermiddag";   // shown at the bottom of 🤖: lets Tobias see that the phone has the newest page
 function robotTime(iso, nowMs){
   const t = Date.parse(iso||""); if (isNaN(t)) return "";
   const d = new Date(t), n = new Date(nowMs), hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -374,6 +376,25 @@ function robotPick(branches, picked){
     out.hint = `Datorn har ${cur.name} installerad. Tryck Uppdatera och installera för att byta till ${sel.name}, sedan Kör roboten.`;
   return out;
 }
+/* Claude's verdict on one item (2026-11-01): {kind, text} or null. Advice only - Tobias's thumbs decide. Text only, never HTML. */
+function claudeLine(it){
+  const c = it && it.claude;
+  if (!c || typeof c.words !== "string" || !["ok","problem","unsure"].includes(c.verdict)) return null;
+  const w = c.words.slice(0, 300);
+  const ok = it.kind === "sound" ? "Claude: siffrorna ser normala ut (Claude kan inte höra). " : "Claude: ser rätt ut. ";
+  return {kind: c.verdict, text: c.verdict === "ok" ? ok + w
+                               : c.verdict === "problem" ? "Claude ser ett fel: " + w : "Claude är osäker: " + w};
+}
+/* What the box says about Claude: n waiting items, looked = how many Claude gave a verdict, flagged = how many it thinks are
+   wrong, problem = why Claude could not look (from the PC). Always ends with who decides. */
+function claudeSays(n, looked, flagged, problem){
+  if (!n) return "";
+  const why = typeof problem === "string" && problem ? problem.slice(0, 300) : "";
+  if (!looked) return why ? `Claude kunde inte titta den här gången: ${why}. Du bestämmer som vanligt.` : "";
+  const part = looked < n ? `Claude hann titta på ${looked} av ${n}${why ? ` (${why})` : ""}. ` : "";
+  if (flagged) return part + `Claude tror att något är fel i ${flagged} ${flagged === 1 ? "kontroll – den" : "kontroller – de"} ligger först. Du bestämmer.`;
+  return part + "Claude hittade inget fel, men titta ändå – du bestämmer.";
+}
 /* The "waiting for you" box (2026-10-31): waiting = waiting.json from the PC, done = ids answered on this phone just now. */
 function reviewSummary(waiting, done, nowMs){
   const items = (waiting && Array.isArray(waiting.items) ? waiting.items : []).filter(i => i && (i.kind === "pic" || i.kind === "sound")
@@ -382,11 +403,17 @@ function reviewSummary(waiting, done, nowMs){
   const parts = [pics && `${pics} ${pics === 1 ? "bild" : "bilder"}`, sounds && `${sounds} ljud`].filter(Boolean);
   const l = waiting && waiting.last, at = l ? Date.parse(l.at || "") : NaN;
   const fresh = l && typeof l.text === "string" && l.text && !isNaN(at) && (nowMs || Date.now()) - at < 864e5;
+  // Claude's advice (tools/autotest/claude_review.py, 2026-11-01): what Claude thinks looks wrong comes first
+  const rank = i => { const c = claudeLine(i); return c && c.kind === "problem" ? 0 : c && c.kind === "unsure" ? 1 : 2; };
+  items.sort((a, b) => rank(a) - rank(b));
+  const flagged = items.filter(i => rank(i) === 0).length;
+  const looked = items.filter(i => claudeLine(i)).length;
   return {items, pics, sounds, text: parts.length ? "Väntar på dig: " + parts.join(" och ") : "",
+          claude: claudeSays(items.length, looked, flagged, waiting && waiting.claude_problem),
           last: fresh ? `${robotTime(l.at, nowMs || Date.now())}: ${l.text}`.replace(/^kl\. /, "Kl. ").replace(/^igår/, "Igår") : ""};
 }
 // for the parity test (node): module.exports when there is no window
-if (typeof window === "undefined") { module.exports = {dumps, merge, checkMerge, move, add, renumber, eq, tourRows, robotView, robotTime, robotPick, ROBOT_BRANCH, PAGE_VERSION, reviewSummary}; }
+if (typeof window === "undefined") { module.exports = {dumps, merge, checkMerge, move, add, renumber, eq, tourRows, robotView, robotTime, robotPick, ROBOT_BRANCH, PAGE_VERSION, reviewSummary, claudeLine, claudeSays}; }
 </script>
 <script>
 "use strict";
@@ -900,7 +927,7 @@ function openReview(waiting, rv, after){
       } catch(e){ toast(e.message); card.querySelectorAll("button").forEach(b => b.disabled = false); }
     };
     const verdictRow = (it, card) => {
-      const words = h("textarea",{rows:"2",class:"rb-words",placeholder:"Vad är fel? Några ord (Claude läser dem)."});
+      const words = h("textarea",{rows:"2",class:"rb-words",placeholder:"Vad är fel? Några ord (Claude i chatten läser dem)."});
       const wrongBox = h("div",{class:"hidden"}, words,
         h("div",{class:"rb-row"}, h("button",{type:"button",class:"btn primary wide",onclick:()=>answer(it, false, card, words.value)}, "Skicka")));
       const okLabel = it.kind === "pic" ? "👍 Den nya ser rätt ut" : "👍 Låter rätt";
@@ -911,6 +938,8 @@ function openReview(waiting, rv, after){
     for (const it of rv.items){
       const card = h("div",{class:"rb-state"});
       card.append(h("div",{class:"big"}, it.title || it.check));
+      const cl = claudeLine(it);
+      if (cl) card.append(h("div",{class:"rb-claude " + cl.kind}, (cl.kind === "problem" ? "⚠️ " : cl.kind === "ok" ? "✓ " : "❔ ") + cl.text));
       if (it.kind === "pic"){
         card.append(h("div",{class:"d"}, "Titta efter: " + (it.look_for || "")));
         for (const p of it.pictures || []){
@@ -940,7 +969,7 @@ function openReview(waiting, rv, after){
       list.append(card);
     }
     return [h("h2",{}, "Titta och lyssna"),
-      h("div",{class:"sub"}, "Hörlurar hjälper. Ditt svar räknas precis som om du tryckte i Watchtower på datorn."),
+      h("div",{class:"sub"}, "Hörlurar hjälper. Ditt svar räknas precis som om du tryckte i Watchtower på datorn. Claude ger bara råd – dina tummar bestämmer."),
       list, h("div",{class:"actions"}, h("button",{type:"button",class:"btn wide",onclick:close}, "Stäng"))];
   }, after);
 }
@@ -995,6 +1024,7 @@ function openRobot(){
           v.total && h("div",{class:"rb-tot"}, h("span",{class:"p"}, `✓ ${v.total.pass} godkända`), h("span",{class:"f"}, `✗ ${v.total.fail} fel`), h("span",{class:"s"}, `${v.total.skip} hoppades över`))),
         rv.text && h("div",{class:"rb-state busy"}, h("div",{class:"big"}, rv.text),
           h("div",{class:"d"}, "Bilderna och ljuden roboten vill att du tittar och lyssnar på."),
+          rv.claude && h("div",{class:"d"}, rv.claude),
           h("div",{class:"rb-row"},
             h("button",{type:"button",class:"btn primary wide",onclick:()=>openReview(data.waiting, rv, ()=>openRobot())}, "👀 Titta och lyssna"))),
         rv.last && h("div",{class:"note"}, rv.last),
