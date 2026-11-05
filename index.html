@@ -155,6 +155,13 @@ ol.steps li{margin:6px 0}
 .rb-state{border:1px solid var(--line);border-radius:12px;background:var(--panel2);padding:14px;margin:6px 0 4px}
 .rb-state .big{font-size:17px;font-weight:700}
 .rb-state .d{margin-top:4px;font-size:14.5px}
+.rb-pic{display:block;width:100%;border-radius:8px;border:1px solid var(--line);margin-top:4px;cursor:zoom-in}
+.rb-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:start}
+.zoom{position:fixed;inset:0;z-index:55;background:#0b0d10;color:#e8eaed;display:flex;flex-direction:column;gap:10px;padding:12px 12px calc(12px + env(safe-area-inset-bottom))}
+.zoom-label{font-weight:700;font-size:15px;text-align:center}
+.zoom .btn.wide{flex:none}
+.zoom-pic{flex:1 1 0;min-height:0;display:flex;align-items:center;justify-content:center}
+.zoom-pic img{max-width:100%;max-height:100%;object-fit:contain;border-radius:6px}
 .rb-claude{margin-top:8px;padding:8px 10px;border-radius:8px;font-size:14px;border:1px solid var(--line)}
 .rb-claude.problem{border-color:var(--fail);background:var(--fail-bg)} .rb-claude.ok{border-color:var(--pass)}
 .rb-state.ok{border-color:var(--pass)} .rb-state.bad{border-color:var(--fail);background:var(--fail-bg)} .rb-state.busy{border-color:var(--ember);background:var(--amber-bg)}
@@ -698,6 +705,22 @@ function sheet(content, onClose){
   const first = scrim.querySelector("[autofocus]"); if (first && matchMedia("(min-width:700px)").matches) first.focus();
   return close;
 }
+/* One picture filling the screen; tap it to switch between Förut and Nu, the button closes (2026-11-05).
+   Its own layer on top of the open sheet, so closing it leaves the review where you were. */
+function zoomPictures(pics, start){
+  const shown = pics.filter(([img]) => img.src);
+  if (!shown.length) return;
+  let i = Math.max(0, shown.findIndex(([img]) => img === pics[start][0]));
+  const big = h("img",{alt:""}), label = h("div",{class:"zoom-label"});
+  const draw = () => { big.src = shown[i][0].src; big.alt = shown[i][2]; label.textContent = shown[i][2] + (shown.length > 1 ? " · tryck på bilden för att byta" : ""); };
+  const esc = e => { if (e.key === "Escape") { e.stopImmediatePropagation(); close(); } };
+  const close = () => { layer.remove(); removeEventListener("keydown", esc, true); };
+  const shut = h("button",{type:"button",class:"btn primary wide",onclick:close}, "Stäng");
+  const layer = h("div",{class:"zoom",role:"dialog","aria-modal":"true"}, label,
+    h("div",{class:"zoom-pic",onclick:() => { i = (i + 1) % shown.length; draw(); }}, big), shut);
+  addEventListener("keydown", esc, true);
+  draw(); document.body.append(layer); shut.focus();   // focus here, not on the review underneath
+}
 function seg(options, value, onPick){
   const wrap = h("div",{class:"seg"});
   const draw = v => { wrap.replaceChildren(...options.map(([val,label])=>h("button",{type:"button","aria-pressed":String(val===v),onclick:()=>{ onPick(val); draw(val); }}, label))); };
@@ -992,15 +1015,19 @@ function openReview(waiting, rv, after){
       if (it.kind === "pic"){
         card.append(h("div",{class:"d"}, "Titta efter: " + (it.look_for || "")));
         for (const p of it.pictures || []){
-          const now = h("img",{alt:"Nu",style:"width:100%;border-radius:8px;border:1px solid var(--line);margin-top:6px"});
-          const before = p.before ? h("img",{alt:"Förut",style:"width:100%;border-radius:8px;border:1px solid var(--line);margin-top:6px"}) : null;
-          // DOM append() writes null as the text "null" (2026-11-01: "nullnull" over every new picture): leave the empty ones out
-          card.append(...[h("div",{class:"tg"}, p.what || "Bild"),
-            before && h("div",{class:"note"}, "Förut (den du godkände):"), before,
-            h("div",{class:"note"}, before ? "Nu:" : "Nu (ny bild):"), now].filter(Boolean));
-          mediaUrl(media, p.now).then(u => now.src = u, e => now.replaceWith(h("div",{class:"note"}, "Bilden gick inte att hämta: " + e.message)));
-          if (before) mediaUrl(media, p.before).then(u => before.src = u, () => {});
+          // Förut and Nu side by side (Tobias 2026-11-05: one above the other was hard to compare); tap one to see both big
+          const now = h("img",{alt:"Nu",class:"rb-pic"});
+          const before = p.before ? h("img",{alt:"Förut",class:"rb-pic"}) : null;
+          // [picture, short label over it (one line on a narrow phone, so both pictures start level), label when big]
+          const pics = before ? [[before, "Förut (godkänd)", "Förut (den du godkände)"], [now, "Nu", "Nu"]] : [[now, "Nu (ny bild)", "Nu (ny bild)"]];
+          pics.forEach(([img], k) => img.addEventListener("click", () => { if (img.src) zoomPictures(pics, k); }));
+          card.append(h("div",{class:"tg"}, p.what || "Bild"),
+            h("div",{class:before ? "rb-pair" : null}, pics.map(([img, label]) => h("div",{}, h("div",{class:"note"}, label), img))));
+          const failed = img => e => img.replaceWith(h("div",{class:"note"}, "Bilden gick inte att hämta: " + e.message));
+          mediaUrl(media, p.now).then(u => now.src = u, failed(now));
+          if (before) mediaUrl(media, p.before).then(u => before.src = u, failed(before));
         }
+        if ((it.pictures || []).some(p => p.before)) card.append(h("div",{class:"note"}, "Tryck på en bild för att se den större och växla mellan Förut och Nu."));
       } else {
         card.append(h("div",{class:"d"}, (it.robot === "fail" ? "Roboten tyckte att det var FEL – låter det rätt för dig gäller ditt svar. " : "Roboten tyckte att det var rätt. ") + "Lyssna efter: " + (it.listen_for || "")));
         if (it.pc_only) card.append(h("div",{class:"note"}, "Alla ljud kom inte med till mobilen (för mycket på en gång). Lyssna på den här i Watchtower på datorn, knappen Listen, och svara där."));
